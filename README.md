@@ -23,6 +23,19 @@
 - **做梦**：她在桌宠上睡着时每晚最多做一个有点荒诞的梦，存在单独的文件里，和日记、记忆分开。
 - **插件**：几乎所有功能都是插件，你也可以自己写（见 [插件开发指南](docs/PLUGINS.md)）。
 
+## 致谢
+
+- 基于 [Alterssss/dsh-bili-whale](https://github.com/Alterssss/dsh-bili-whale)（MIT）—— 那条会自己刷 B 站、写日记的鱼就是它，感谢原作者。
+- **形象**：社区二创的 DeepSeek 鲸鱼娘（「大肥鱼」），原型「溟月」by B 站 [@上善无形](https://space.bilibili.com/4456176)，
+  DeepSeek 版（女仆鲸鱼娘）设计 by B 站 [@ZipZipPipe](https://space.bilibili.com/4168597)，
+  [CC BY-NC-SA 4.0](https://creativecommons.org/licenses/by-nc-sa/4.0/deed.zh-hans)（[声明原文](https://www.bilibili.com/opus/1247156596114456581)）。
+  **不是 DeepSeek 官方形象。**
+- **动画素材**来自 [PC2005-cloud/dsh-pet](https://github.com/PC2005-cloud/dsh-pet)，**禁止商用**。
+- 运行在 **DeepSeek Harness（DSH）** 上。
+- 本仓库里基于该形象生成的图（头像、图标、截图里的形象）同样以 CC BY-NC-SA 4.0 分享。
+
+详细的出处与许可见 [CREDITS.md](CREDITS.md)。
+
 ## 需要什么
 
 | 东西 | 说明 |
