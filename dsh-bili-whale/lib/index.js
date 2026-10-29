@@ -1,0 +1,554 @@
+import { guardedFetch as fetch, RISK_DEFAULTS } from '../tools/lib/traffic.mjs'
+/**
+ * dsh-bili-whale —— 宿主侧插件（设置壳）
+ *
+ * 职责只有三件：
+ *   1. 设置页：DSH 客户端 section「设置 → 养鱼」（lib/client.js）
+ *   2. 配置读写：GET/POST /dsh-bili/api/settings → 读写 ~/.dsh/bili-whale.config.json
+ *      （与 bilibili-tools 里的 lib/config.mjs 共用同一份文件 —— 不搞两套配置）
+ *   3. 依赖体检：GET /dsh-bili/api/deps → 跑 `node <tools>/bili.mjs deps --json`
+ *      （这就是"装完之后让 agent/用户自己确认依赖能不能用"）
+ *
+ * 凭据（cookie）**单独写**到 ~/.bili-ai/credentials.json，且**永远不回显**。
+ *
+ * 所有路由都过一遍 connection.requestRejection 的信任栅栏：DSH 的 Web 端口是回环地址，
+ * 但浏览器里任何一个网页都能向回环发请求 —— 不加栅栏等于把配置与账号凭据开放给任意页面。
+ */
+import fs from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
+import { execFile } from 'node:child_process'
+import { fileURLToPath } from 'node:url'
+import { startScheduler } from './scheduler.js'
+import { startCompanionBridge } from './companion-bridge.js'
+import { resolveWorkDir } from './work-dir.js'
+import { resolveNodeRuntime, nodeEnv } from './node-runtime.js'
+import { HOME, DSH_HOME, configPath, credentialsPath } from '../tools/lib/paths.mjs'
+
+/** 生物钟状态：{ ok, reason, at } —— 设置页/体检用它回答「时钟是不是活的」 */
+let SCHED_STATUS = { ok: false, reason: "未初始化", at: null }
+
+
+
+/**
+ * execFile 的安全包装：NODE_EXE 解析失败时不让 execFile(null, …) 抛 TypeError，
+ * 而是把原因通过回调交给调用方（设置页就能显示真因，而不是一个空 stdout）。
+ */
+function execNode(args, options, cb) {
+  if (!NODE_EXE) {
+    const msg = globalThis.__biliWhaleNodeError || '未找到可用的 node 运行时'
+    cb?.(new Error(msg), '', msg)
+    return null
+  }
+  return execFile(NODE_EXE, args, { ...options, env: { ...nodeEnv(DSH_HOME), ...options?.env } }, cb)
+}
+
+
+// 2026-10-19：真 node 路径（Electron 的 process.execPath 是 Harness.exe ✗ 跑不了 node 脚本）
+const NODE_EXE = (() => {
+  const dshHome = process.env.DSH_HOME || path.join(os.homedir(), '.dsh')
+  try {
+    return resolveNodeRuntime(dshHome)
+  } catch (e) {
+    // 不静默回退：process.execPath 在桌面端是 Electron 主程序，跑不了脚本。
+    // 这里只记录，具体失败由各调用点按自身语义报出（设置页体检会显示原因）。
+    globalThis.__biliWhaleNodeError = String(e?.message ?? e)
+    return null
+  }
+})()
+
+const HERE = path.dirname(fileURLToPath(import.meta.url))
+const CFG_FILE = configPath
+const CRED_FILE = credentialsPath
+// 2026-10-21 修 Issue #6：她的会话工作目录必须是**专用小目录**，不能用用户主目录 ✗
+//   原因：DSH 的 Windows 沙箱会把会话 cwd 当"工作区"，主目录当工作区会让权限/完整性标签
+//   影响到主目录下的其它程序（实测有人 DSH / VS Code 起不来）✗
+//   放在 ~/.dsh/whale-work 里，范围最小，也不会碰任何别的东西 ✓
+const WORK_DIR = path.join(DSH_HOME, 'whale-work')
+
+
+/** 默认配置（与 lib/config.mjs 的中性默认对齐；这里多一个 toolsPath） */
+const DEFAULTS = {
+  sessionRotateDays: 0,
+  personaOncePerSession: false,
+  risk: RISK_DEFAULTS,
+  owner: { mid: '', name: '' },
+  night: {
+    windows: [{ start: '20:00', end: '24:00', wakes: 1 }],
+    skipChance: 0.3,
+    minGapMin: 10, maxVideos: 5,
+  },
+  preferences: {
+    like: ['DSH/AI 工具与插件', '鬼畜与怀旧向剪辑', '猫咪', 'Live2D/模型', 'B站生态八卦'],
+    dislike: ['带货', '擦边', '标题党', '纯搬运'],
+    keywords: [],
+  },
+  quota: { shareDaily: 3 },
+  diary: { push: true, enabled: true },   // 2026-10-20：写日记不可关；只留"要不要推送"一个开关
+  // ④ 2026-10-18：补上 persona / self（和 tools/lib/config.mjs 对齐 ✓ 否则设置页首次打开是空的 ✗）
+  persona: { name: '', ownerTitle: '主人', selfClaim: '我' },
+  self: { mid: '', name: '' },
+  notify: { type: 'none', url: '', template: 'text', cmd: '' },
+  listen: { comment: true, commentIntervalSec: 60, scope: 'both', oncePerPerson: false, allDay: false, dm: false, live: false, liveRoom: '', liveScope: 'owner' },
+  share: { aiCommentGuard: false, aiThreshold: 30, enabled: true, via: 'comment', minScore: 13, silentAfterDays: 3, },
+  toolsPath: '',
+}
+
+const clone = (o) => JSON.parse(JSON.stringify(o))
+const merge = (base, over) => {
+  const out = { ...base }
+  for (const [k, v] of Object.entries(over || {})) {
+    out[k] = v && typeof v === 'object' && !Array.isArray(v) ? merge(base[k] ?? {}, v) : v
+  }
+  return out
+}
+
+/** 工具链里 bili.mjs 的位置：① 设置里的 toolsPath ② 插件自带的 tools/ ③ 开发目录 */
+function resolveBiliMjs() {
+  const cfg = readConfig()
+  // 2026-10-18：去掉"作者机器"回退 ✗（换机器就是静默失效）→ 只有两个候选：设置里的 toolsPath / 插件自带 tools/ ✓
+  return cfg.toolsPath || path.join(HERE, '..', 'tools', 'bili.mjs')
+}
+
+function readConfig() {
+  let user = {}
+  try { user = JSON.parse(fs.readFileSync(CFG_FILE, 'utf8')) } catch { /* 没配就用默认 */ }
+  return { ...merge(DEFAULTS, user), __hasUserFile: Object.keys(user).length > 0 }
+}
+
+function writeConfig(next) {
+  fs.mkdirSync(path.dirname(CFG_FILE), { recursive: true })
+  fs.writeFileSync(CFG_FILE, JSON.stringify(next, null, 2) + '\n')
+}
+
+/** 只回"能不能用"，不回显任何凭据内容 */
+function credState() {
+  try {
+    const c = JSON.parse(fs.readFileSync(CRED_FILE, 'utf8'))
+    return { present: true, hasSess: !!c.sessdata, hasJct: !!c.bili_jct, hasBuvid: !!c.buvid3 }
+  } catch { return { present: false, hasSess: false, hasJct: false, hasBuvid: false } }
+}
+
+function json(res, code, obj) {
+  res.writeHead(code, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' })
+  res.end(JSON.stringify(obj))
+}
+
+function readBody(req, limit = 64 * 1024) {
+  return new Promise((resolve, reject) => {
+    let size = 0
+    const chunks = []
+    req.on('data', (c) => {
+      size += c.length
+      if (size > limit) { reject(new Error('body too large')); req.destroy(); return }
+      chunks.push(c)
+    })
+    req.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')))
+    req.on('error', reject)
+  })
+}
+
+export default {
+  name: 'dsh-bili-whale',
+  // ⚠️ 2026-10-18 踩的坑：这里以前**写了两个 inject 键** ✗ —— 对象字面量后者覆盖前者 →
+  //   `sessionController` 没被注入 → 生物钟每 60 秒静默 `return`（不报错、也不干活 ✗）
+  //   一个数组写全 ✓
+  inject: ['sessionController', 'webServer', 'connection'],
+  apply(ctx) {
+
+/** 写操作只认本机回环（2026-10-17 加，Kimi 评审指出）：DSH 的 Web 端口万一绑到 0.0.0.0，
+ *  局域网里任何人都能改 cookie / 换主人 mid —— 那样"@分享"就全 @ 给攻击者了。
+ *  这一层是兜底：host 不是回环就直接 403。 */
+function isLoopbackReq(req) {
+  const host = String(req.headers?.host ?? '').toLowerCase()
+  const h = host.split(':')[0]
+  return h === '127.0.0.1' || h === 'localhost' || h === '[::1]' || h === '::1'
+}
+
+    // P1-1（Kimi 评审 #8）：这条路以前是 fail-open —— connection 缺失/抛错就**放行** ✗
+    // 安全组件的默认值必须是"关"：栅栏不可用 → 拒绝（写操作尤其），只对静态页面留一条活路。
+    function rejected(req, res, { strict = true } = {}) {
+      if (isLoopbackReq(req) === false) {
+        // 连 Host 都不是回环 → 一律拒（防"服务绑到 0.0.0.0"那种情况）
+        json(res, 403, { ok: false, error: '只接受本机回环访问' })
+        return true
+      }
+      try {
+        const conn = ctx.get('connection') || ctx.connection
+        if (!conn || typeof conn.requestRejection !== 'function') {
+          if (!rejected.warned) {
+            rejected.warned = true
+            console.warn('[bili-whale] 信任栅栏不可用：connection 服务缺失 → 按 fail-closed 处理')
+          }
+          if (strict) { json(res, 503, { ok: false, error: '信任栅栏不可用，拒绝访问（fail-closed）' }); return true }
+          return false
+        }
+        const code = conn.requestRejection(req)
+        if (code === undefined || code === null || code === false) return false
+        res.statusCode = typeof code === 'number' ? code : 403
+        res.end()
+        return true
+      } catch (e) {
+        if (strict) { json(res, 503, { ok: false, error: '信任栅栏异常，拒绝访问（fail-closed）' }); return true }
+        return false
+      }
+    }
+
+    const disposers = []
+    function route(kind, pathname, handler) {
+      disposers.push(ctx.webServer.register({
+        kind,
+        path: pathname,
+        handler: async (req, res) => {
+          if (rejected(req, res)) return
+          try { await handler(req, res) } catch (err) {
+            try { json(res, 500, { ok: false, error: String(err?.message ?? err) }) } catch {}
+          }
+        },
+      }))
+    }
+
+    // 旧的独立设置页已下线（2026-10-18）：DSH 的信任栅栏不认插件路径，这个页面在浏览器里永远 403 ✗
+    // 设置页唯一的入口是「设置 → 养鱼」（lib/client.js）。旧的 lib/settings.html 已删除（2026-10-22）✓
+    // 需要本地直开时：把该文件拷到桌面双击（它的 API 调用会被栅栏拒，只作静态预览 ✓）
+
+    // 写设置：浅合并，但**只接受已知的顶层字段** ✓（2026-10-18 加白名单，兑现这句注释 ✗ 原来是什么都收）
+    // P0-2（Kimi 评审 #2）：读和写**合成一个 handler**（原来同一路径注册两次，
+    //   宿主若是"首个匹配即终止"，后注册的 POST 永远收不到请求 ✗）
+    route('exact', '/dsh-bili/api/settings', async (req, res) => {
+      if (req.method === 'GET') { json(res, 200, { ok: true, config: readConfig(), credentials: credState(), configPath: CFG_FILE }); return }
+      if (!isLoopbackReq(req)) { json(res, 403, { ok: false, error: '只接受本机回环访问' }); return }
+      if (req.method !== 'POST') { json(res, 405, { ok: false }); return }
+      const body = JSON.parse(await readBody(req) || '{}')
+      const cur = readConfig()
+      delete cur.__hasUserFile
+      // ⚠️ 2026-10-18 修的 bug：客户端发的是**配置本身**，这里却只认 `body.config` ✗
+      //   → merge(cur, {}) = 什么都没改 → "保存成功"但值没变（主人实测就是这个 ✗）
+      //   现在两种都收：{ config: {...} } 或直接 {...}
+      const incoming = (body && typeof body.config === 'object' && body.config) || body || {}
+      // 顶层白名单：只合并认识的键（防止被塞任意字段 ✓）
+      // 2026-10-21 修（审查 #4）：原来白名单漏了 diary ✗ → 设置页「推送日记摘要」存不进去
+      const KNOWN = new Set(['persona', 'preferences', 'notify', 'aliases', 'owner', 'self', 'quota', 'share', 'listen', 'diary', 'night', 'toolsPath', 'home', 'risk', 'sessionRotateDays', 'personaOncePerSession'])
+      const filtered = {}
+      for (const [k, v] of Object.entries(incoming)) if (KNOWN.has(k)) filtered[k] = v
+      const next = merge(cur, filtered)
+      const rotateDays = Number(next.sessionRotateDays)
+      if (!Number.isFinite(rotateDays) || rotateDays < 0 || rotateDays > 365 || typeof next.personaOncePerSession !== 'boolean') {
+        json(res, 400, { ok: false, error: '会话轮换天数须为 0–365；人设去重须为布尔值' }); return
+      }
+      next.sessionRotateDays = rotateDays
+      // 基本的范围校验（别让设置页把东西写成负数/离谱值）
+      const n = next.night
+      if (!Array.isArray(n.windows) || !n.windows.length) { json(res, 400, { ok: false, error: '至少要有一个作息窗口' }); return }
+      n.maxWakesPerDay = Math.min(12, Math.max(0, Number(n.maxWakesPerDay ?? 0) || 0))   // 12 = 与 whale-night 的上限一致 ✓
+      n.skipChance = Math.min(0.95, Math.max(0, Number(n.skipChance) || 0))
+      n.minGapMin = Number.isFinite(Number(n.minGapMin)) ? Math.max(1, Number(n.minGapMin)) : 10
+      n.maxVideos = Math.min(20, Math.max(1, Number(n.maxVideos) || 5))
+      // P0-3（Kimi 评审 #3）：Number(0) || 3 === 3 → 用户取消勾选"分享"会被强行改回 3 ✗
+      const sd = Number(next.quota.shareDaily)
+      next.quota.shareDaily = Number.isFinite(sd) ? Math.min(20, Math.max(0, sd)) : 3
+      writeConfig(next)
+      // 改完立刻生效 ✓（主人 2026-10-18 要求）：清掉旧计划，让生物钟按新配置重算
+      const schedulingChanged = ['windows', 'skipChance', 'maxVideos', 'minGapMin'].some(key => JSON.stringify(cur.night?.[key]) !== JSON.stringify(next.night?.[key]))
+      try { sched?.invalidate(schedulingChanged) } catch {}
+      json(res, 200, { ok: true, config: next, warn: next.quota.shareDaily > 3 ? '分享条数 >3：看起来会像刷量，平台可能限流/封号' : null })
+    })
+
+    // 写凭据（只写不读回）
+    route('exact', '/dsh-bili/api/cookie', async (req, res) => {
+      if (!isLoopbackReq(req)) { json(res, 403, { ok: false, error: '只接受本机回环访问' }); return }
+      if (req.method !== 'POST') { json(res, 405, { ok: false }); return }
+      const b = JSON.parse(await readBody(req) || '{}')
+      // 2026-10-21：自动清洗 —— 用户最常见的三种粘错方式都在这里兜住 ✓
+      //   ① 带 "SESSDATA=" 前缀  ② 粘了整条 cookie  ③ 带了引号/分号/换行
+      const pick = (raw, key) => {
+        let v = String(raw ?? '').trim()
+        // 整条 cookie 里抠出这个键
+        const m = v.match(new RegExp('(?:^|;)\\s*' + key + '=([^;]+)', 'i'))
+        if (m) return m[1].trim()
+        // 单个 "key=value" 形式
+        v = v.replace(new RegExp('^' + key + '\\s*=', 'i'), '')
+        // 去引号 / 尾部分号
+        v = v.replace(/^["'\s]+|["';\s]+$/g, '')
+        return v
+      }
+      const sessdata = pick(b.sessdata, 'SESSDATA')
+      const bili_jct = pick(b.bili_jct, 'bili_jct')
+      const buvid3 = pick(b.buvid3, 'buvid3')
+      // 逐字段体检（把"哪里不对"说清楚，而不是一句"写入失败" ✗）
+      const problems = []
+      if (!sessdata) problems.push('SESSDATA 空着（它是 HttpOnly，document.cookie 读不到 ✗ 必须 F12 → Application → Cookies 手动复制）')
+      else if (sessdata.length < 20) problems.push('SESSDATA 太短（长度 ' + sessdata.length + '）—— 大概只复制到一半')
+      if (!bili_jct) problems.push('bili_jct 空着')
+      else if (!/^[0-9a-fA-F]{32}$/.test(bili_jct)) problems.push('bili_jct 格式不对（长度 ' + bili_jct.length + '，B站 目前是 32 位十六进制）—— 可能复制截断，或粘到了别的字段')
+      // 2026-10-22 修（主人实测撞上）：buvid3 的真实格式是
+      //   `0BE6296B-F60E-ABAF-24FD-2D4F1619E79785121infoc` —— 结尾带 infoc ✗
+      //   原来只允许十六进制+横线 → 合法值被判错 → 连带整次保存都失败 ✗
+      //   而且 buvid3 本身是可选的：格式可疑只该【提醒】，不该拦住写入 ✓
+      // 真实形状：0BE6296B-F60E-ABAF-24FD-2D4F1619E79785121infoc
+      //   = 8 位 + 横线 + 至少 20 位字母数字/横线（结尾常是 infoc）
+      //   放太松（{16,}）连随便 16 位字符都会放过去 ✗ 收紧到「有横线 + 够长」✓
+      const buvid3LooksOdd = buvid3 && !/^[0-9A-Za-z]{6,}-[0-9A-Za-z-]{18,}$/.test(buvid3)
+      if (problems.length) {
+        json(res, 400, {
+          ok: false,
+          error: '凭据有问题，没写入：\n  · ' + problems.join('\n  · ') +
+            '\n\n正确做法：浏览器打开 bilibili.com → F12 → Application（应用）→ Cookies → https://www.bilibili.com' +
+            '\n逐个双击 Value 复制（SESSDATA 和 bili_jct 两个都要）✓ 别用 document.cookie ✗',
+        })
+        return
+      }
+      fs.mkdirSync(path.dirname(CRED_FILE), { recursive: true })
+      fs.writeFileSync(CRED_FILE, JSON.stringify({ sessdata, bili_jct, buvid3 }, null, 2) + '\n')
+      try { fs.chmodSync(CRED_FILE, 0o600) } catch {}
+      // 2026-10-19：写完 cookie 立刻问一次 nav，把 self 刷成新号 ✓
+      let whoNow = null
+      let navCode = null
+      let navMsg = ''
+      let navErr = null
+      try {
+        const navRes = await fetch('https://api.bilibili.com/x/web-interface/nav', {
+          headers: { 'user-agent': 'Mozilla/5.0', referer: 'https://www.bilibili.com/', cookie: `SESSDATA=${sessdata}; bili_jct=${bili_jct}; buvid3=${buvid3}` },
+        })
+        const navJson = await navRes.json().catch(() => ({}))
+        navCode = navJson?.code ?? null
+        navMsg = String(navJson?.message ?? '')
+        if (navJson?.data?.isLogin && navJson.data.mid) {
+          whoNow = { mid: String(navJson.data.mid), name: String(navJson.data.uname ?? '') }
+          const cur = readConfig()
+          writeConfig({ ...cur, self: whoNow })
+        }
+      } catch (e) { navErr = String(e?.message ?? e).slice(0, 120) }
+      // 2026-10-21：nav 失败要说清"为什么" —— 只写"没确认成功"用户不知道该改什么 ✗
+      json(res, 200, {
+        ok: true,
+        warn: buvid3LooksOdd ? '⚠️ buvid3 格式有点怪（不影响使用，想要的话重新复制一次）' : null,
+        detail: whoNow
+          ? `已写入 ✓ 当前登录：${whoNow.name}（mid ${whoNow.mid}）`
+          : '已写入，但 B站 不认这个 cookie ✗'
+            + (navCode != null ? `（nav 返回 code=${navCode}${navMsg ? ' ' + navMsg : ''}）` : '')
+            + (navErr ? `（请求失败：${navErr}）` : '')
+            + ' —— 最常见两个原因：\n  · SESSDATA 复制时截断了（它很长，双击 Value 全选再复制）\n  · 复制自别的浏览器 / 无痕窗口，已经失效\n  重新打开 bilibili.com 复制一次【SESSDATA 和 bili_jct 两个都重抄】✓',
+        self: whoNow,
+      })
+    })
+
+    // ── 她专属的人设（2026-10-21 主人要的）：只影响她，不影响别的会话 ✓ ──────────
+    //   存在 ~/.bili-ai/persona.md → 换机器时连 .bili-ai 一起拷就带着走 ✓
+    const PERSONA_FILE = path.join(HOME, '.bili-ai', 'persona.md')
+    route('exact', '/dsh-bili/api/persona', async (req, res) => {
+      if (!isLoopbackReq(req)) { json(res, 403, { ok: false, error: '只接受本机回环访问' }); return }
+      if (req.method === 'GET') {
+        let text = ''
+        try { text = fs.readFileSync(PERSONA_FILE, 'utf8') } catch {}
+        let updatedAt = null
+        try { updatedAt = fs.statSync(PERSONA_FILE).mtime.toISOString() } catch {}
+        json(res, 200, { ok: true, text, bytes: Buffer.byteLength(text, 'utf8'), updatedAt })
+        return
+      }
+      if (req.method !== 'POST') { json(res, 405, { ok: false }); return }
+      const b = JSON.parse(await readBody(req) || '{}')
+      const text = String(b.text ?? '')
+      if (text.length > 20000) { json(res, 400, { ok: false, error: '太长（上限 20000 字），人设不用写论文 ✗' }); return }
+      try {
+        fs.mkdirSync(path.dirname(PERSONA_FILE), { recursive: true })
+        fs.writeFileSync(PERSONA_FILE, text, 'utf8')
+        try { fs.chmodSync(PERSONA_FILE, 0o600) } catch {}
+      } catch (e) { json(res, 500, { ok: false, error: '写入失败：' + String(e?.message ?? e).slice(0, 120) }); return }
+      const bytes = Buffer.byteLength(text, 'utf8')
+      json(res, 200, {
+        ok: true,
+        bytes,
+        detail: text.trim()
+          ? '✓ 已注入（' + bytes + ' 字节）—— 从下一次唤醒开始生效 ✓'
+          : '✓ 已清空 —— 她回到只有「设置里的人设」那几行 ✓',
+      })
+    })
+
+    // 依赖体检：跑 bili.mjs deps --json
+    route('exact', '/dsh-bili/api/deps', async (req, res) => {
+      const cfg = readConfig()
+      // 工具位置（2026-10-18 收敛为两个候选 ✗ 去掉"作者机器"路径）：
+      //   ① 设置里的 toolsPath  ② <插件根>/tools/bili.mjs（发布版自带 ✓）
+      const tools = cfg.toolsPath || path.join(HERE, "..", "tools", "bili.mjs")
+      if (!fs.existsSync(tools)) {
+        json(res, 200, { ok: false, error: `找不到 bili.mjs：${tools}（在设置里填「工具目录」）`, items: [], scheduler: SCHED_STATUS })
+        return
+      }
+      execNode([tools, 'deps', '--json'], { timeout: 60_000, windowsHide: true }, (err, stdout, stderr) => {
+        try {
+          const parsed = JSON.parse(String(stdout || '{}'))
+          // 2026-10-19：顺手把"她自己是谁"从 cookie 体检里抠出来写回配置 ✓
+          //   以前 self.mid / self.name 只有默认值、没人写 → 设置页永远空 ✗
+          let selfNow = null
+          try {
+            const ck = (parsed.items ?? []).find((it) => it.name === 'B站 cookie')
+            const m = String(ck?.detail ?? '').match(/已登录：(.+?)（mid (\d+)）/)
+            if (m) {
+              selfNow = { name: m[1], mid: m[2] }
+              const cur = readConfig()
+              if (String(cur.self?.mid ?? '') !== selfNow.mid || String(cur.self?.name ?? '') !== selfNow.name) writeConfig({ ...cur, self: selfNow })
+            }
+          } catch {}
+          // 2026-10-20：把"跑没跑过启动测试"一起返回 —— 设置页用它决定要不要显示首次安装横幅
+          let selftestPassed = false
+          try {
+            selftestPassed = fs.existsSync(path.join(HOME, ".bili-ai", "selftest-passed.json"))
+          } catch {}
+          json(res, 200, { ok: !!parsed.ok, items: parsed.items ?? [], node: parsed.node, self: selfNow, selftestPassed, scheduler: SCHED_STATUS })
+        } catch {
+          json(res, 200, { ok: false, error: String(stderr || err?.message || 'deps 跑失败').slice(0, 300), items: [] })
+        }
+      })
+    })
+
+    // ── 待审回复（2026-10-18 主人选 B 档：**发前审核**）──────────────────────────
+    //   她的回复先进 pending-replies.json → 主人在「设置 → 养鱼 → 待审核」里点发才发 ✓
+    const PENDING = path.join(HOME, '.bili-ai', 'pending-replies.json')
+    route('exact', '/dsh-bili/api/pending', async (req, res) => {
+      if (!isLoopbackReq(req)) { json(res, 403, { ok: false, error: '只接受本机回环访问' }); return }
+      let items = []
+      try { items = JSON.parse(fs.readFileSync(PENDING, 'utf8')).items ?? [] } catch {}
+      json(res, 200, { ok: true, items })
+    })
+    route('exact', '/dsh-bili/api/pending/reject', async (req, res) => {
+      if (!isLoopbackReq(req)) { json(res, 403, { ok: false, error: '只接受本机回环访问' }); return }
+      if (req.method !== 'POST') { json(res, 405, { ok: false }); return }
+      const b = JSON.parse(await readBody(req) || '{}')
+      const id = String(b.id ?? '')
+      if (!id) { json(res, 400, { ok: false, error: '需要 id' }); return }
+      execNode([resolveBiliMjs(), 'reply-draft', 'drop', id], { timeout: 20000, windowsHide: true }, (err, stdout) => {
+        // 否掉也是一种反馈 → 记事件流（她下次能学到"这种不要" ✓）
+        // ⚠️ 只有真的删掉了才记 ✗ —— 以前连点几次会重复记三条（2026-10-18 修 ✓）
+        if (!err) {
+          try {
+            fs.appendFileSync(path.join(DSH_HOME, 'whale-log.jsonl'),
+              JSON.stringify({ at: new Date().toISOString(), kind: 'reply-rejected', target: null, note: `主人否掉了草稿 ${id}${b.reason ? '：' + String(b.reason).slice(0, 80) : ''}` }) + '\n')
+          } catch {}
+        }
+        json(res, 200, { ok: !err, out: String(stdout ?? '').slice(0, 300) })
+      })
+    })
+    route('exact', '/dsh-bili/api/pending/approve', async (req, res) => {
+      if (!isLoopbackReq(req)) { json(res, 403, { ok: false, error: '只接受本机回环访问' }); return }
+      if (req.method !== 'POST') { json(res, 405, { ok: false }); return }
+      const b = JSON.parse(await readBody(req) || '{}')
+      const id = String(b.id ?? '')
+      if (!id) { json(res, 400, { ok: false, error: '需要 id' }); return }
+      const bili = resolveBiliMjs()
+      // 2026-10-21 修（审查 P1-2）：下面回调里用了 cfg.listen，但本作用域【没有 cfg】✗
+      //   → ReferenceError，而草稿已被 take 掉 → 静默丢失 ✗
+      let cfgNow = {}
+      try { cfgNow = readConfig() } catch {}
+      // ① 从队列取出（取不到 = 已经发过/删过 ✓）
+      execNode([bili, 'reply-draft', 'take', id], { timeout: 20000, windowsHide: true }, (err, stdout) => {
+        let item = null
+        try { item = JSON.parse(String(stdout ?? '')) } catch {}
+        if (!item) { json(res, 400, { ok: false, error: '队列里没有这条（可能已经发过）' }); return }
+        // ② 真发（--auto → 自动报备 ✓；--once-per-person → 判重 ✓）
+        const args = ['comment', '--oid', item.oid, '--root', item.root, '--parent', item.parent,
+          '--message', item.message, '--auto', ...(cfgNow.listen?.oncePerPerson !== false ? ['--once-per-person'] : []), '--go']
+        if (item.bvid) args.push('--bvid', item.bvid)
+        execNode([bili, ...args], { timeout: 120000, windowsHide: true }, (e2, out2, err2) => {
+          const text = String(out2 ?? '')
+          const ok = !e2 && /code=0/.test(text)
+          const rpid = (text.match(/rpid=(\d+)/) ?? [])[1] ?? null
+          try {
+            fs.appendFileSync(path.join(DSH_HOME, 'whale-log.jsonl'),
+              JSON.stringify({ at: new Date().toISOString(), kind: ok ? 'reply-sent' : 'reply-failed', target: item.who || item.parent, note: `${ok ? '主人批准并发出' : '发送失败'} · ${String(item.message).slice(0, 60)}` }) + '\n')
+          } catch {}
+          // 2026-10-21：发送失败 → 草稿放回队列，别悄悄丢掉 ✗
+          if (!ok) {
+            try {
+              const back = ['reply-draft', 'add', '--oid', item.oid, '--message', item.message]
+              if (item.bvid) back.push('--bvid', item.bvid)
+              if (item.root) back.push('--root', item.root)
+              if (item.parent) back.push('--parent', item.parent)
+              if (item.who) back.push('--who', item.who)
+              if (item.src) back.push('--src', item.src)
+              execNode([bili, ...back], { timeout: 20000, windowsHide: true }, () => {})
+              console.error('[pending/approve] 发送失败，草稿已放回队列：' + id)
+            } catch (e) { console.error('[pending/approve] 放回草稿也失败：' + e.message) }
+          }
+          json(res, 200, { ok, rpid, out: text.slice(-600), err: String(err2 ?? '').slice(0, 400) })
+        })
+      })
+    })
+
+    // 「发条测试」：真的跑一次 notify.mjs --test，把结果原样返回（配错了当场能看见 ✓）
+    // 2026-10-18 主人要求：必须有这个按钮，不然配错了不知道 ✗
+    route('exact', '/dsh-bili/api/notify-test', async (req, res) => {
+      if (!isLoopbackReq(req)) { json(res, 403, { ok: false, error: '只接受本机回环访问' }); return }
+      if (req.method !== 'POST') { json(res, 405, { ok: false }); return }
+      const cfg = readConfig()
+      const tools = cfg.toolsPath || path.join(HERE, "..", "tools", "bili.mjs")
+      const notifyMjs = path.join(path.dirname(tools), 'commands', 'notify.mjs')
+      if (!fs.existsSync(notifyMjs)) { json(res, 200, { ok: false, error: `找不到 notify.mjs：${notifyMjs}` }); return }
+      execNode([notifyMjs, '--test'], { timeout: 60_000, windowsHide: true }, (err, stdout, stderr) => {
+        json(res, 200, {
+          ok: !err,
+          out: String(stdout ?? '').slice(0, 800),
+          err: String(stderr ?? '').slice(0, 800),
+          type: cfg.notify?.type ?? 'none',
+        })
+      })
+    })
+
+    // 状态（只读）：今天分享了几条 / 今天的作息计划 / 判重账本里记了几个人
+    route('exact', '/dsh-bili/api/status', async (req, res) => {
+      const localHome = HOME
+      const readJson = (p) => { try { return JSON.parse(fs.readFileSync(p, 'utf8')) } catch { return null } }
+      const quota = readJson(path.join(localHome, '.bili-ai', 'quota.json')) ?? { log: [] }
+      const today = new Date().toLocaleDateString('sv-SE')
+      const todays = (quota.log ?? []).filter((x) => new Date(x.at).toLocaleDateString('sv-SE') === today)
+      const night = readJson(path.join(DSH_HOME, 'whale-night.json'))
+      const replied = readJson(path.join(localHome, '.bili-ai', 'replied.json'))
+      json(res, 200, {
+        ok: true, today,
+        shares: todays.filter((x) => x.share).length,
+        sharesMax: readConfig().quota?.shareDaily ?? 3,
+        commentsToday: todays.length,
+        repliedPeople: Object.keys(replied?.byUid ?? {}).length,
+        plan: night ? { date: night.date, action: night.action, atText: night.atText ?? null, wakes: Number(night.wakes ?? 0), windows: night.usedWindows ?? [] } : null,
+      })
+    })
+
+    // ── 自主生物钟（2026-10-18）：插件自己 tick，到点自己叫醒她（不靠对话框 ✓）────────
+    let sched = null
+    // 2026-10-21 修（Issue #8-3）：时钟起不来时以前只 console.warn ✗
+    //   用户在设置页看不出「它永远不会醒」→ 现在把状态记下来，/deps 带出去 ✓
+    try {
+      sched = startScheduler(ctx, {
+        dshHome: DSH_HOME,
+        biliMjs: resolveBiliMjs(),
+        cwd: resolveWorkDir(readConfig().home, WORK_DIR),
+        sessionId: 'bili-whale',
+        log: (m) => { try { console.log(m) } catch {} },
+      })
+      SCHED_STATUS = { ok: true, reason: '已启动（每 60 秒 tick）', at: new Date().toISOString() }
+    } catch (e) {
+      SCHED_STATUS = { ok: false, reason: String(e?.message ?? e).slice(0, 300), at: new Date().toISOString() }
+      try { console.warn('[bili-whale] 生物钟启动失败：' + e.message) } catch {}
+    }
+
+    // ── 桌宠本机接口（whale-companion）：127.0.0.1 + 令牌；配置里 companion.bridge=false 可关 ──
+    let bridge = null
+    if (sched && readConfig().companion?.bridge !== false) {
+      try {
+        bridge = startCompanionBridge({ dshHome: DSH_HOME, sched, log: (m) => { try { console.log(m) } catch {} } })
+      } catch (e) {
+        try { console.warn('[bili-whale] 桌宠接口启动失败：' + e.message) } catch {}
+      }
+    }
+
+    ctx.effect(() => () => {
+      try { bridge?.stop() } catch {}
+      try { sched?.stop() } catch {}
+      for (const d of disposers) { try { d() } catch {} }
+    })
+
+    try {
+      console.log(`[bili-whale] 设置页已挂载：/dsh-bili/ · 配置 ${CFG_FILE}`)
+    } catch {}
+  },
+}

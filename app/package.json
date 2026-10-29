@@ -1,0 +1,18 @@
+{
+  "name": "whale-companion",
+  "version": "0.1.0",
+  "private": true,
+  "description": "桌宠：点她聊天、叫她去刷 B 站。配合 dsh-bili-whale 使用。",
+  "type": "module",
+  "main": "src/main/main.js",
+  "scripts": {
+    "start": "node scripts/start.mjs",
+    "shortcut": "node scripts/shortcut.mjs",
+    "stickers": "node scripts/import-stickers.mjs",
+    "test": "node --test test/*.test.mjs"
+  },
+  "devDependencies": {
+    "electron": "^38.0.0"
+  },
+  "license": "MIT"
+}

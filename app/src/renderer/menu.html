@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'">
+  <title>菜单</title>
+  <link rel="stylesheet" href="menu.css">
+</head>
+<body>
+  <!-- 窗口是透明的；#box 才是看得见的菜单，四周留白给阴影 -->
+  <div id="box" role="menu">
+    <div id="head">
+      <img id="avatar" src="avatar.png" alt="">
+      <div>
+        <b id="name"></b>
+        <small id="status"></small>
+      </div>
+    </div>
+    <div id="list"></div>
+  </div>
+  <script src="menu.js"></script>
+</body>
+</html>

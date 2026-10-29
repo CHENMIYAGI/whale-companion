@@ -1,0 +1,37 @@
+/* 窗口 300×340（main.js 的 PET_W/PET_H）。视频原始 640×360，人物站在中间：x 213~426、y 64~329。
+   这里缩到 400×225（×0.625），左右各有 50px 空白露在窗口外，所以人物在窗口里是 x 83~216、y 137~303。
+   改了视频大小或位置，下面的 #whale、#bubble 要跟着改。 */
+html, body { margin: 0; height: 100%; background: transparent; overflow: hidden; user-select: none; }
+#stage { position: absolute; inset: 0; }
+
+.anim { position: absolute; left: -50px; bottom: 18px; width: 400px; height: 225px; opacity: 0; pointer-events: none; }
+.anim.front { opacity: 1; }
+
+/* 点击区域只盖住人物身体（比身体再收一点），透明的地方不挡鼠标 */
+#whale { position: absolute; left: 98px; top: 142px; width: 104px; height: 158px; cursor: pointer;
+  font-size: 0; display: flex; align-items: center; justify-content: center; }
+/* 动画文件缺了（没复制 anim/*.webm）就退回 emoji，不至于什么都看不见 */
+.no-anim .anim { display: none; }
+.no-anim #whale { font-size: 96px; }
+
+#label { position: absolute; left: 0; right: 0; bottom: 0; width: fit-content; max-width: 220px; margin: 0 auto;
+  padding: 2px 8px; border-radius: 8px; font: 12px sans-serif; color: #444; background: rgba(255, 255, 255, 0.85);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#label:empty { display: none; }
+
+/* 气泡底边贴在头顶上方（窗口底往上 208px），往上长 */
+#bubble { position: absolute; left: 0; right: 0; bottom: 208px; width: fit-content; max-width: 200px; margin: 0 auto;
+  padding: 0 4px; border: 8px solid #fff; border-radius: 14px; font: 13px/1.5 sans-serif; color: #333;
+  background: #fff; box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18); cursor: pointer; word-break: break-all;
+  display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; }
+#bubble[hidden] { display: none; }
+/* 上下用白色边框代替内边距：文字超过 4 行被裁掉时，裁剪线在边框里面，第 5 行不会从下面露出来 */
+
+/* 主人在忙：淡一点，不抢眼（main.js 的忙碌感知发来 busy） */
+body.busy #stage { opacity: 0.5; }
+
+/* 入场 / 退出（pet.js 最后一段）：整个窗口淡入淡出。away = 还没入场，leaving = 在说再见 */
+body { transition: opacity 0.8s ease-out; }
+body.away { opacity: 0; }
+body.leaving { opacity: 0; transition: opacity 0.6s ease-in; }
+#stage { transition: opacity 0.6s; }

@@ -1,0 +1,4 @@
+# shell 脚本必须是 LF 换行，CRLF 的话 bash 会报错（Windows 上 git 默认会转成 CRLF）
+*.sh text eol=lf
+# 补丁也要 LF，否则 git apply 对不上
+*.patch text eol=lf

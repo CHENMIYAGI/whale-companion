@@ -1,0 +1,52 @@
+# 依赖
+node_modules/
+
+# 个人的说明和设置（不公开）
+CLAUDE.local.md
+*.local.*
+.claude/settings.local.json
+.env
+.env.*
+
+# 日志、测试截图
+*.log
+app/test/out/
+**/test/out/
+*.tmp
+
+# dsh-pet 的动画和表情包（素材禁止商用，自己从 dsh-pet 复制，见 app/src/renderer/anim/README.md、app/stickers/README.md）
+app/src/renderer/anim/*.webm
+app/stickers/**/*.png
+app/stickers/**/*.jpg
+app/stickers/**/*.jpeg
+app/stickers/**/*.gif
+app/stickers/**/*.webp
+
+# 运行时数据：本来都在 ~/.dsh、~/.bili-ai、~/.whale-companion 里；万一有人把它们复制进项目，也别提交
+whale-bridge.json
+credentials.json
+.credentials.yaml
+persona.md
+self.md
+owner-view.md
+owner-view-archive/
+whale-diary*.md
+whale-memories.md
+whale-dreams.md
+whale-letters/
+whale-videos/
+chat-log.jsonl
+outbox.jsonl
+notebook.md
+taste.json
+vision-cache.json
+state.json
+my-stickers/
+received/
+avatars/
+companion.log*
+
+# 打包出来的东西
+*.zip
+dist/
+out/

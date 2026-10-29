@@ -1,0 +1,39 @@
+/* 样式照 docs/ui-mock.html 的右键菜单；颜色和 chat.css 是一套 */
+:root {
+  --ink: #24243c; --ink-2: #55597a; --navy: #2c3263; --blue: #3c549c; --sky-soft: #e9f0fb;
+  --paper: #fbfaf6; --lace: #e7e1d6; --danger: #b4505a;
+  --margin: 12px;   /* 和 main.js 的 MENU_MARGIN 一样：窗口四周给阴影留的地方 */
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; background: transparent; overflow: hidden; user-select: none; cursor: default; }
+body { padding: var(--margin); font: 13px/1.4 "Microsoft YaHei UI", "PingFang SC", "Noto Sans CJK SC", system-ui, sans-serif; color: var(--ink); }
+
+#box { width: 216px; border-radius: 16px; overflow: hidden; background: var(--paper);
+  box-shadow: 0 6px 14px rgba(20, 30, 70, 0.28), 0 0 0 1px rgba(44, 50, 99, 0.22); }
+
+/* 头：深海蓝 + 女仆花边，和对话框标题栏一样 */
+#head { position: relative; display: flex; align-items: center; gap: 8px; padding: 10px 14px 16px;
+  background: linear-gradient(135deg, var(--navy), var(--blue)); color: #fff; }
+#head::after { content: ""; position: absolute; left: 0; right: 0; bottom: -1px; height: 8px;
+  background: radial-gradient(circle at 6px 8px, var(--paper) 5.5px, transparent 6px) 0 0 / 12px 8px repeat-x; }
+#head > div { min-width: 0; }
+#avatar { width: 26px; height: 26px; flex: none; border-radius: 50%; object-fit: cover; background: #fff; box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.85); }
+#name { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#status { display: block; font-size: 11px; opacity: 0.85; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+#list { padding: 4px 0 8px; }
+.mi { display: flex; align-items: center; gap: 10px; margin: 1px 6px; padding: 7px 10px; border-radius: 10px; }
+.mi .ic { width: 20px; flex: none; text-align: center; }
+.mi .label { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mi.active { background: var(--sky-soft); color: var(--navy); }
+.mi.dis { color: #b0aca3; }
+.mi .hint { margin-left: auto; flex: none; max-width: 90px; font-size: 10.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mi.danger { color: var(--danger); }
+.mi.danger.active { background: #f8e9ea; }
+.sep { height: 0; margin: 5px 14px; border-top: 1px dashed var(--lace); }
+
+/* 开关（总在最前） */
+.tog { margin-left: auto; flex: none; width: 30px; height: 17px; border-radius: 9px; background: #cfcbd8; position: relative; }
+.tog::after { content: ""; position: absolute; left: 2px; top: 2px; width: 13px; height: 13px; border-radius: 50%; background: #fff; transition: left 0.15s; }
+.tog.on { background: var(--blue); }
+.tog.on::after { left: 15px; }

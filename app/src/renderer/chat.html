@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' sticker:">
+  <title>和她聊天</title>
+  <link rel="stylesheet" href="chat.css">
+</head>
+<body>
+  <!-- 无边框窗口：标题栏自己做，整条能拖动窗口，按钮区不能拖（否则点不动） -->
+  <header id="titlebar">
+    <img id="avatar" src="avatar.png" alt="">
+    <div id="who">
+      <div id="name">她</div>
+      <div id="statusLine"><span id="dot"></span><span id="status"></span></div>
+    </div>
+    <div id="titleButtons">
+      <button id="btnPause" type="button" title="出门开关">🚪</button>
+      <button id="btnSettings" type="button" title="设置">⚙</button>
+      <button id="btnClose" type="button" title="收起">✕</button>
+    </div>
+  </header>
+
+  <main id="messages"></main>
+
+  <!-- 表情面板：主人自己的收藏（~/.whale-companion/my-stickers/），点一张就发 -->
+  <section id="stickerPanel" hidden>
+    <div id="stickerGrid"></div>
+    <div class="row">
+      <button id="btnPickFile" type="button">选一张图…</button>
+      <button id="btnStickerFolder" type="button">打开收藏文件夹</button>
+    </div>
+    <input id="filePick" type="file" accept="image/png,image/jpeg,image/gif,image/webp" hidden>
+  </section>
+
+  <form id="composer">
+    <button id="btnStickers" type="button" title="表情包（也可以直接粘贴、拖图进来）">☺</button>
+    <textarea id="input" rows="1" placeholder="跟她说点什么…" title="Enter 发送，Shift+Enter 换行"></textarea>
+    <button id="btnSend" type="submit" title="发送">➤</button>
+    <button id="btnStop" type="button" title="停止" hidden>■</button>
+  </form>
+
+  <!-- 设置面板：盖在消息区和输入框上面 -->
+  <section id="settings" hidden>
+    <h2>设置</h2>
+    <p id="setupHint" hidden>先填好 API key、选一个模型，就能和她聊天了。</p>
+
+    <label for="setBaseUrl">接口地址</label>
+    <input id="setBaseUrl" type="text" spellcheck="false">
+
+    <label for="setKey">API key</label>
+    <input id="setKey" type="password" autocomplete="off" spellcheck="false">
+    <p class="hint"><button id="btnGetKey" type="button" class="link">去 DeepSeek 开放平台拿 key</button></p>
+    <p id="plainWarn" class="hint warn" hidden>这台电脑不能加密保存，key 会以只有你能读的文件存着。</p>
+
+    <label for="setModel">模型</label>
+    <div class="row">
+      <select id="setModel"></select>
+      <button id="btnModels" type="button">获取模型列表</button>
+    </div>
+
+    <p id="setMsg"></p>
+
+    <!-- 待机小动作：改了就存 -->
+    <h3>待机时的小动作</h3>
+    <div class="row interval">
+      每隔 <input id="setIdleMin" type="number" min="1" max="60"> 到 <input id="setIdleMax" type="number" min="1" max="60"> 分钟一次
+    </div>
+    <p class="hint">东张西望、哼歌、吐泡泡、伸懒腰，随机挑一个（不会连着两次一样）。</p>
+
+    <!-- 她自己开口：改了就存 -->
+    <h3>她自己开口</h3>
+    <label class="check"><input id="setFollowUp" type="checkbox"> 我没回的时候她会接着说，最多连着
+      <input id="setFollowUpRounds" class="small-num" type="number" min="1" max="5"> 轮</label>
+    <p class="hint">她说完 2～5 分钟你没回，她可能再说几句（也可能不说）。你一发消息就停；你在忙的时候先存着，忙完一起给你。</p>
+    <label class="check"><input id="setProactive" type="checkbox"> 她会主动找我说话</label>
+    <div class="row interval">至少隔 <input id="setGap" type="number" min="10" max="1440"> 分钟，每天最多 <input id="setDaily" type="number" min="1" max="20"> 次</div>
+    <div class="row interval">深夜 <input id="setQuietStart" type="number" min="0" max="23"> 点到 <input id="setQuietEnd" type="number" min="0" max="23"> 点不找我</div>
+    <p class="hint">只在你坐在电脑前、没在忙、你们有一阵子没聊的时候；说不说由她。</p>
+
+    <!-- 入场 / 退出动画：勾了就存 -->
+    <h3>来和走</h3>
+    <label class="check"><input id="setEntrance" type="checkbox"> 启动时淡入、挥手打招呼（下次启动生效）</label>
+    <label class="check"><input id="setExit" type="checkbox"> 退出时挥手说再见再淡出（最多 3 秒；关机时不等）</label>
+
+    <!-- 忙碌感知：勾了就存（不用点下面的保存） -->
+    <h3>主人在忙的时候</h3>
+    <label class="check"><input id="setBusyManual" type="checkbox"> 右键和托盘里显示「我在忙」</label>
+    <label class="check"><input id="setBusyFullscreen" type="checkbox"> 前台程序全屏时（看视频、玩游戏、演示）也算在忙</label>
+    <p class="hint">忙的时候她先不冒气泡、不做小动作，忙完一起说。离开电脑 10 分钟也算「不在」。</p>
+    <div class="row end">
+      <button id="btnBack" type="button">返回</button>
+      <button id="btnSave" type="button" class="primary">保存</button>
+    </div>
+
+    <details>
+      <summary>插件</summary>
+      <ul id="pluginList"></ul>
+      <p class="hint">自己的插件放在：<span id="pluginDir"></span></p>
+    </details>
+  </section>
+
+  <script src="chat.js"></script>
+</body>
+</html>

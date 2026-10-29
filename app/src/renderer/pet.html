@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'">
+  <link rel="stylesheet" href="pet.css">
+</head>
+<body class="away">
+  <div id="stage">
+    <!-- 两个 video 交替用：后台那个加载好了再换到前面，切换时不会闪 -->
+    <video id="animA" class="anim" muted playsinline></video>
+    <video id="animB" class="anim" muted playsinline></video>
+    <div id="whale">🐋</div>
+    <div id="bubble" hidden></div>
+    <div id="label"></div>
+  </div>
+  <script src="idle-extras.js"></script>
+  <script src="pet.js"></script>
+</body>
+</html>
