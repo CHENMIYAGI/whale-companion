@@ -31,7 +31,7 @@
   [CC BY-NC-SA 4.0](https://creativecommons.org/licenses/by-nc-sa/4.0/deed.zh-hans)（[声明原文](https://www.bilibili.com/opus/1247156596114456581)）。
   **不是 DeepSeek 官方形象。**
 - **动画素材**来自 [PC2005-cloud/dsh-pet](https://github.com/PC2005-cloud/dsh-pet)，**禁止商用**。
-- 运行在 **DeepSeek Harness（DSH）** 上。
+- 运行在 [**DeepSeek Harness（DSH）**](https://www.deepseek.com/en/harness/) 上。
 - 本仓库里基于该形象生成的图（头像、图标、截图里的形象）同样以 CC BY-NC-SA 4.0 分享。
 
 详细的出处与许可见 [CREDITS.md](CREDITS.md)。
