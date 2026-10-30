@@ -2,7 +2,7 @@
 // 每行一条：{ id, at, role: 'user'|'assistant'|'event', text, source?, kind?, bv?, meta? }
 //   source='dsh'  她在 DSH 里刷完视频后发回来的话（outbox）
 //   role='event'  工具调用之类的记录，不进模型上下文，只留痕
-//   kind='followup'  主人没回时她接着说的；kind='proactive' 她主动开口说的；kind='sticker' 表情包（meta.sticker）
+//   kind='followup'  主人没回时她接着说的；kind='proactive' 她主动开口说的；kind='together' 一起看时说的；kind='sticker' 表情包（meta.sticker）
 import fs from 'node:fs'
 import path from 'node:path'
 import crypto from 'node:crypto'

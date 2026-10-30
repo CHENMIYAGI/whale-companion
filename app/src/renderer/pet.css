@@ -35,3 +35,9 @@ body { transition: opacity 0.8s ease-out; }
 body.away { opacity: 0; }
 body.leaving { opacity: 0; transition: opacity 0.6s ease-in; }
 #stage { transition: opacity 0.6s; }
+
+/* 带按钮的气泡（一起看的邀请）：不截行，下面一排按钮 */
+#bubble.has-actions { display: block; -webkit-line-clamp: unset; max-width: 230px; }
+#bubble .actions { display: flex; gap: 4px; margin-top: 6px; justify-content: center; }
+#bubble .actions button { padding: 2px 8px; border: 1px solid #cfdcf1; border-radius: 10px; background: #fff; color: #3c549c; font: 12px sans-serif; cursor: pointer; }
+#bubble .actions button:first-child { background: #3c549c; border-color: #3c549c; color: #fff; }

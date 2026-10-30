@@ -26,6 +26,8 @@ export const DEFAULT_CONFIG = {
   busyManual: null,   // 手动「我在忙」到什么时候：{ until: 毫秒 } / { until: null }（直到我说）/ null
   // 主动开口（core/proactive.js）：至少隔 minGapMinutes 分钟、每天最多 dailyMax 次、quietStart 点到 quietEnd 点不开口
   proactive: { enabled: true, minGapMinutes: 60, dailyMax: 4, quietStart: 23, quietEnd: 8 },
+  // 一起看（2026-10-30）：invite = 主动开口时可以邀请一起看；overFullscreen = 一起看时全屏不算忙、桌宠浮在全屏窗口上面
+  watch: { invite: true, overFullscreen: true },
   plugins: { disabled: [], settings: {} },
 }
 

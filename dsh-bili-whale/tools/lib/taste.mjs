@@ -6,6 +6,9 @@
 //     事件只记 BV 和种类；统计时再按当前的分类归类 —— 合并、改名之后旧的反应也跟着走
 //   · feed 选题时在原来的打分上加一项口味分（±3 封顶，不动原来的偏好逻辑）；外加最多一个「想让你试试」的名额
 //   · 每周一次在桌宠上说一句「这周的分类」
+//   · 「留着以后」（2026-10-30，一起看）：她想陪主人一起看的视频，video tag --later 加进 taste.json 的 later 列表；
+//     她空闲时先预习下一 P（video note --p N 记笔记，video preview 标好），桌宠在她主动开口时邀请主人一起看。
+//     主人的回答（现在看 watch / 晚点再说 postpone / 不想看 skip）也记成反应，算进分类的统计
 //
 // 桌宠那边（app/src/main/core/taste.js）读写同一个 taste.json：格式改了两边要一起改。
 import fs from 'node:fs'
@@ -16,7 +19,7 @@ import { listVideos, videoDir, BV_RE } from './video-notes.mjs'
 
 export const TASTE_FILE = path.join(HOME, '.bili-ai', 'taste.json')
 export const MAX_CATEGORIES = 15
-export const KINDS = ['shown', 'open', 'talk', 'like', 'dislike']
+export const KINDS = ['shown', 'open', 'talk', 'like', 'dislike', 'watch', 'postpone', 'skip']
 const DAY = 86400000
 
 function writeAtomic(file, text) {
@@ -28,8 +31,8 @@ function writeAtomic(file, text) {
 export function readTaste(file = TASTE_FILE) {
   try {
     const j = JSON.parse(fs.readFileSync(file, 'utf8'))
-    return { version: 1, categories: Array.isArray(j.categories) ? j.categories : [], events: Array.isArray(j.events) ? j.events : [], weeklyAt: j.weeklyAt ?? null }
-  } catch { return { version: 1, categories: [], events: [], weeklyAt: null } }
+    return { version: 1, categories: Array.isArray(j.categories) ? j.categories : [], events: Array.isArray(j.events) ? j.events : [], weeklyAt: j.weeklyAt ?? null, later: Array.isArray(j.later) ? j.later : [] }
+  } catch { return { version: 1, categories: [], events: [], weeklyAt: null, later: [] } }
 }
 export const writeTaste = (t, file = TASTE_FILE) => writeAtomic(file, JSON.stringify({ ...t, events: t.events.slice(-3000) }, null, 2) + '\n')
 
@@ -97,7 +100,7 @@ export function tasteStats(dshHome, { file = TASTE_FILE, since = 0 } = {}) {
   const verdicts = verdictMap(dshHome)
   const rows = new Map()
   const row = (name) => {
-    if (!rows.has(name)) rows.set(name, { name, videos: 0, shown: 0, open: 0, talk: 0, like: 0, dislike: 0, examples: [] })
+    if (!rows.has(name)) rows.set(name, { name, videos: 0, shown: 0, open: 0, talk: 0, like: 0, dislike: 0, watch: 0, postpone: 0, skip: 0, examples: [] })
     return rows.get(name)
   }
   for (const c of t.categories) row(c.name)
@@ -106,11 +109,61 @@ export function tasteStats(dshHome, { file = TASTE_FILE, since = 0 } = {}) {
     if (!KINDS.includes(e.kind) || Date.parse(e.at) < since) continue
     row(verdicts.get(e.bv)?.category ?? e.category ?? '未分类')[e.kind]++
   }
-  for (const r of rows.values()) {
-    r.score = (r.open + r.talk + 2 * r.like - 2 * r.dislike) / Math.max(1, r.shown)
-    r.verdict = r.dislike > r.like && r.score < 0.3 ? '算了' : r.score >= 0.6 && (r.open + r.talk + r.like) >= 2 ? '爱看' : r.shown + r.open + r.talk + r.like + r.dislike === 0 ? '还没反应' : '一般'
-  }
+  for (const r of rows.values()) scoreRow(r)
   return [...rows.values()].sort((x, y) => y.score - x.score || y.videos - x.videos)
+}
+
+/**
+ * 一个分类的分数和结论（桌宠那边 core/taste.js 一模一样）。
+ * 一起看：答应「现在看」算 +1（和点开一样），「不想看」算 −1，「晚点再说」不算分
+ */
+export function scoreRow(r) {
+  const pos = r.open + r.talk + (r.watch ?? 0)
+  r.score = (pos + 2 * r.like - 2 * r.dislike - (r.skip ?? 0)) / Math.max(1, r.shown)
+  r.verdict = r.dislike > r.like && r.score < 0.3 ? '算了' : r.score >= 0.6 && (pos + r.like) >= 2 ? '爱看' : reactions(r) === 0 ? '还没反应' : '一般'
+  return r
+}
+const reactions = (r) => r.shown + r.open + r.talk + r.like + r.dislike + (r.watch ?? 0) + (r.postpone ?? 0) + (r.skip ?? 0)
+
+// ── 「留着以后」（一起看）────────────────────────────────────────────────
+// later 列表里每一项：{ bv, title, at, nextPart（下一次一起看第几 P，从 1 开始）, previewed: [预习过的 P], parts（一共几 P）,
+//   askAfter（桌宠：晚点再说 → 这之前不再邀请）, removed（桌宠：主人说不想看）, done（都一起看完了）, together: [{ part, at }] }
+// DSH 这边只管：加进来（markLater）、标「预习好了」（markPreviewed）。别的字段桌宠管（app/src/main/core/watch-list.js）
+
+/** 加进「留着以后」（已经在里面就不重复加；之前被主人说不想看的不再加回来） */
+export function markLater(dshHome, bv, { file = TASTE_FILE, now = Date.now() } = {}) {
+  if (!BV_RE.test(String(bv))) return { ok: false, error: `BV 号不对：${bv}` }
+  const dir = videoDir(dshHome, bv)
+  if (!fs.existsSync(dir)) return { ok: false, error: `还没有 ${bv} 的视频笔记：先 debrief 它` }
+  const t = readTaste(file)
+  const had = t.later.find((e) => e.bv === bv)
+  if (had?.removed) return { ok: false, error: '主人说过不想看这个，别再留了' }
+  if (had) return { ok: true, duplicate: true, entry: had }
+  let meta = {}
+  try { meta = JSON.parse(fs.readFileSync(path.join(dir, 'meta.json'), 'utf8')) } catch {}
+  const entry = { bv, title: String(meta.title ?? '').slice(0, 80), at: new Date(now).toISOString(), nextPart: 1, previewed: [], parts: Array.isArray(meta.pages) && meta.pages.length ? meta.pages.length : 1 }
+  t.later.push(entry)
+  writeTaste(t, file)
+  return { ok: true, entry }
+}
+
+/** 还在「留着以后」里的（没被主人拒绝、没一起看完） */
+export const laterList = ({ file = TASTE_FILE } = {}) => readTaste(file).later.filter((e) => !e.removed && !e.done)
+
+/** 下一个要预习的：下一 P 还没预习过的那个（先加进来的先） */
+export function previewTodo({ file = TASTE_FILE } = {}) {
+  return laterList({ file }).find((e) => !(e.previewed ?? []).includes(e.nextPart ?? 1)) ?? null
+}
+
+/** 预习完一 P：标上（桌宠看到「预习好了」才会邀请） */
+export function markPreviewed(bv, part, { file = TASTE_FILE } = {}) {
+  const t = readTaste(file)
+  const e = t.later.find((x) => x.bv === bv && !x.removed)
+  if (!e) return { ok: false, error: `${bv} 不在「留着以后」里` }
+  const p = Math.max(1, Math.round(Number(part) || 1))
+  e.previewed = [...new Set([...(e.previewed ?? []), p])].sort((a, b) => a - b)
+  writeTaste(t, file)
+  return { ok: true, entry: e }
 }
 
 // ── 选题时用（feed）──────────────────────────────────────────────────────
@@ -172,7 +225,8 @@ export function statsText(rows, title) {
   const lines = [title]
   if (!rows.length) return lines.concat('（还没有分类）').join('\n')
   for (const r of rows) {
-    lines.push(`【${r.name}】${r.verdict}  —— 你看了 ${r.videos} 个 · 给他看 ${r.shown} 次 · 他点开 ${r.open} · 聊到 ${r.talk} · 说喜欢 ${r.like} · 不喜欢 ${r.dislike}`)
+    lines.push(`【${r.name}】${r.verdict}  —— 你看了 ${r.videos} 个 · 给他看 ${r.shown} 次 · 他点开 ${r.open} · 聊到 ${r.talk} · 说喜欢 ${r.like} · 不喜欢 ${r.dislike}` +
+      (r.watch + r.postpone + r.skip ? ` · 一起看：答应 ${r.watch} / 晚点 ${r.postpone} / 不想看 ${r.skip}` : ''))
     for (const x of r.examples) lines.push(`    「${String(x.title ?? '').slice(0, 30)}」：${x.why}`)
   }
   return lines.join('\n')

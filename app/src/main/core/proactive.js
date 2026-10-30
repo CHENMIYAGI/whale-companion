@@ -54,10 +54,30 @@ const ago = (ms) => (ms < 90 * 60_000 ? `${Math.max(1, Math.round(ms / 60_000))}
  * 问她的话。只交代事实和怎么回，不规定她的心情和反应
  * @param last  上次主动开口：{ at, replied }，没有就 null
  */
-export function proactiveNote({ now, lastChatAt, last, notebook = '' }) {
+export function proactiveNote({ now, lastChatAt, last, notebook = '', invite = null }) {
   const since = lastChatAt ? `你们上次说话是 ${ago(now - lastChatAt)}前。` : '你们还没在桌宠里聊过天。'
   const prev = last ? `上次你主动找他是 ${ago(now - last.at)}前，那之后他${last.replied ? '回过你' : '没回你'}。` : '这是你第一次主动找他。'
+  // 一起看（2026-10-30）：「留着以后」里有预习好的，告诉她可以邀请（邀不邀请由她）
+  const together = invite
+    ? `\n\n［留着以后］你预习好了「${invite.title}」${invite.parts > 1 ? `第 ${invite.nextPart} P` : ''}，一直想陪他一起看。` +
+      `想的话可以邀请他现在一起看：在你要说的话最后单独一行写 ${INVITE}（他会看到「现在看 / 晚点再说 / 不想看」三个按钮，你不用再问一遍）。不想邀请就不写。`
+    : ''
   return `［系统提示，不是主人说的］主人现在在电脑前，没在忙。${since}${prev}
 你可以主动跟他说点什么，也可以不说。
-想说就直接写你要发的话（可以分几条，两条之间单独一行写 ${SEP}）；不想说就只回 ${SILENT}。` + (notebook ? `\n\n［你的小本本］\n${notebook}` : '')
+想说就直接写你要发的话（可以分几条，两条之间单独一行写 ${SEP}）；不想说就只回 ${SILENT}。` + together + (notebook ? `\n\n［你的小本本］\n${notebook}` : '')
+}
+
+/** 她在主动开口的话里写了这个 = 想邀请主人一起看（界面上变成三个按钮，这个记号本身不显示） */
+export const INVITE = '[[邀请一起看]]'
+
+/** 把邀请记号从她的几句话里拿掉：{ parts, invited } */
+export function takeInvite(parts) {
+  let invited = false
+  const out = []
+  for (const p of parts ?? []) {
+    if (p.includes(INVITE)) invited = true
+    const t = p.split(INVITE).join('').trim()
+    if (t) out.push(t)
+  }
+  return { parts: out, invited }
 }

@@ -144,3 +144,25 @@ details { margin-top: 16px; font-size: 12.5px; color: var(--ink-2); }
 
 /* 句子中间的小数字框（「最多连着 2 轮」） */
 #settings input.small-num { width: 44px; margin: 0 4px; padding: 2px 4px; }
+
+/* 一起看：顶上一条（看什么、看到哪、暂停 / 结束） */
+#watchBar { flex: none; display: flex; align-items: center; gap: 8px; padding: 6px 12px; background: var(--sky-soft); border-bottom: 1px solid #cfdcf1; font-size: 12.5px; color: var(--blue); }
+#watchBar[hidden] { display: none; }
+#watchInfo { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#watchBar button { padding: 2px 10px; border: 1px solid #cfdcf1; border-radius: 12px; background: #fff; color: var(--blue); font-size: 12px; }
+#watchBar button:hover { background: var(--lace-2); }
+/* 邀请卡片：三个按钮 */
+.card.invite .row { flex-wrap: wrap; }
+/* 一起看的清单（和设置面板一样盖在上面） */
+#watchList { position: fixed; top: var(--bar-h); left: 0; right: 0; bottom: 0; overflow-y: auto; padding: 16px 16px 12px; background: var(--paper); z-index: 1; }
+#watchList[hidden] { display: none; }
+#watchList h2 { margin: 0 0 6px; font-size: 16px; }
+#watchItems { list-style: none; margin: 10px 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+#watchItems li { padding: 10px 12px; border: 1px solid var(--lace); border-radius: 12px; background: #fff; }
+#watchItems .t { font-weight: 700; }
+#watchItems .s { margin: 3px 0 8px; font-size: 12px; color: var(--ink-2); }
+#watchItems .empty { border: 0; background: none; color: var(--ink-2); font-size: 12.5px; }
+#watchItems button, #watchList .row button { padding: 4px 12px; border: 1px solid var(--lace); border-radius: 14px; background: #fff; color: var(--ink); font-size: 12.5px; }
+#watchItems button.primary { background: var(--navy); border-color: var(--navy); color: #fff; }
+#watchItems button:disabled { opacity: 0.5; }
+#watchList .row { display: flex; justify-content: flex-end; }

@@ -50,7 +50,7 @@ examples/plugins/          插件例子：memory（小本本）、dice、weekend
 | `~/.bili-ai/persona.md` | 用户（出生设定，她改不了；模板见 `app/persona.example.md`） | 两边 |
 | `~/.bili-ai/self.md` | 她（「我的成长」：桌宠的 grow/ungrow、DSH 的 `bili.mjs self`，原子写） | 两边 |
 | `~/.bili-ai/owner-view.md` | 她（「我眼中的主人」：`bili.mjs owner-view write`，旧版按日期进 `owner-view-archive/`） | 两边（桌宠只读，右键「她眼中的我」） |
-| `~/.bili-ai/taste.json` | 两边：DSH 管分类表，桌宠记主人的反应 | DSH（`feed` 加权等）；桌宠右键「她的分类」 |
+| `~/.bili-ai/taste.json` | 两边：DSH 管分类表、「留着以后」的加入和预习（`video tag --later`、`video preview`）；桌宠记主人的反应、邀请的回答、一起看到第几 P | DSH（`feed` 加权、醒来时预习下一 P）；桌宠右键「她的分类」「一起看的清单」。两边读写都要原样保留不认识的字段（`later`） |
 | `~/.whale-companion/stickers/` + `index.json` | 导入脚本（`npm run stickers`）、她要来的图 | 桌宠（`send_sticker`） |
 | `~/.whale-companion/avatars/<状态>.png` | 导入脚本（`--avatars`） | 桌宠对话框标题栏 |
 | `~/.whale-companion/my-stickers/` | 用户（直接丢图，或对话框里「☆ 收藏」） | 桌宠表情面板 |

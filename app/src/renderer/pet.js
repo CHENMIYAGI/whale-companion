@@ -247,9 +247,29 @@ whale.addEventListener('mouseleave', () => {
 let bubbleTimer = null
 
 // 冒一个气泡（入场、退出也用它）
-function showBubble(text) {
+// actions：气泡下面的按钮（一起看的邀请：现在看 / 晚点再说 / 不想看），点了告诉主进程 actionId 和选了哪个
+function showBubble(text, actions = null, actionId = null) {
   // 更新气泡内容，避免将文本当作 HTML 解析
   bubble.textContent = text
+
+  bubble.classList.toggle('has-actions', !!actions)
+  bubble.dataset.actionId = actionId ?? ''
+  if (actions) {
+    const row = document.createElement('div')
+    row.className = 'actions'
+    for (const a of actions) {
+      const b = document.createElement('button')
+      b.type = 'button'
+      b.textContent = a.label
+      b.addEventListener('click', (e) => {
+        e.stopPropagation() // 不算点气泡（点气泡是打开对话框）
+        window.pet.bubbleAction(actionId, a.id)
+        hideBubble()
+      })
+      row.append(b)
+    }
+    bubble.append(row)
+  }
 
   // 显示气泡
   bubble.hidden = false
@@ -259,8 +279,8 @@ function showBubble(text) {
     clearTimeout(bubbleTimer)
   }
 
-  // 显示时间：3 秒 + 每个字 0.15 秒，最多 10 秒
-  const duration = Math.min(3000 + [...text].length * 150, 10000)
+  // 显示时间：3 秒 + 每个字 0.15 秒，最多 10 秒；带按钮的等 1 分钟（等主人选）
+  const duration = actions ? 60000 : Math.min(3000 + [...text].length * 150, 10000)
 
   bubbleTimer = setTimeout(() => {
     bubble.hidden = true
@@ -268,8 +288,21 @@ function showBubble(text) {
   }, duration)
 }
 
+function hideBubble() {
+  bubble.hidden = true
+  if (bubbleTimer !== null) {
+    clearTimeout(bubbleTimer)
+    bubbleTimer = null
+  }
+}
+
 // 收到主进程发送的气泡消息
-window.pet.onBubble(({ text }) => showBubble(text))
+window.pet.onBubble(({ text, actions, actionId }) => showBubble(text, Array.isArray(actions) ? actions : null, actionId))
+
+// 主人在对话框里回答了邀请：气泡上那个就收起来
+window.pet.onBubbleClose(({ actionId }) => {
+  if (actionId && bubble.dataset.actionId === actionId) hideBubble()
+})
 
 // 点击气泡：通知主进程，并立即隐藏
 bubble.addEventListener('click', () => {

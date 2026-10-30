@@ -33,7 +33,10 @@ import { createVision, describeImage, DEFAULT_VISION_MODEL } from './core/vision
 import { HELLO_LINES, BYE_LINES, EXIT_TOTAL_MS, pickLine } from './core/greetings.js'
 import { createHerSay } from './core/her-say.js'
 import { createFollowUp, followUpNote } from './core/follow-up.js'
-import { canSpeak, recordTry, proactiveNote, inQuietHours, PRESENT_SEC } from './core/proactive.js'
+import { canSpeak, recordTry, proactiveNote, takeInvite, inQuietHours, PRESENT_SEC } from './core/proactive.js'
+import { inviteCandidate, answerInvite, partInfo, finishPart, listView, laterEntries } from './core/watch-list.js'
+import { linesPrompt, parseLines, linesFromNotes, createWatchSession, watchEndNote } from './core/watch-session.js'
+import crypto from 'node:crypto'
 import { readDreams, appendDream, nightOf, memoryFragments, dreamPrompt, tidyDream, sleepTalk } from './core/dreams.js'
 import { diaryTail } from './plugins/diary/index.js'
 import { personaText } from './plugins/persona/index.js'
@@ -102,10 +105,13 @@ bus.setMaxListeners(100)
 // ── 桌宠状态：底色来自 bili-whale 插件，「在想」「在说」叠在上面 ─────────────────
 const pet = { base: { state: 'idle', mood: 'normal', label: '连接中…', online: false }, thinking: false, talkingUntil: 0, unread: 0 }
 function petView() {
-  const state = pet.thinking ? 'thinking' : Date.now() < pet.talkingUntil ? 'talking' : pet.base.state
+  // 正在一起看（没暂停）：底色换成「在看」
+  const together = watch?.session && !watch.session.status().paused
+  const state = pet.thinking ? 'thinking' : Date.now() < pet.talkingUntil ? 'talking' : together ? 'watching' : pet.base.state
   // chatOpen：桌宠靠它决定点她时播挥手（要打开对话框）还是播点击回应（已经开着）
   const b = busy?.state() ?? { busy: false, reasons: [] }
-  return { state, mood: pet.base.mood, label: pet.base.label, online: !!pet.base.online, paused: !!pet.base.paused, unread: pet.unread, chatOpen: !!chatWin?.isVisible(), busy: b.busy, busyReasons: b.reasons, idleEvery: idleEvery() }
+  const label = watch ? `和你一起看${watch.preparing ? '（准备中…）' : watch.session?.status().paused ? '（暂停）' : ''}` : pet.base.label
+  return { state, mood: pet.base.mood, label, online: !!pet.base.online, paused: !!pet.base.paused, unread: pet.unread, chatOpen: !!chatWin?.isVisible(), busy: b.busy, busyReasons: b.reasons, idleEvery: idleEvery() }
 }
 // 待机小动作的间隔（分钟）：配置里读，坏值退回 3–8
 function idleEvery() {
@@ -151,7 +157,7 @@ let proactiveStore = null   // state.json 里的 proactive 段：{ lastTriedAt, 
 let proactiveRunning = false
 
 async function checkProactive() {
-  if (!chat || !herSay || leaving || proactiveRunning) return
+  if (!chat || !herSay || leaving || proactiveRunning || watch) return   // 正在一起看：不另外找话说
   const now = Date.now()
   const rows = chatLog.recent(200)
   const lastChatAt = rows.length ? Date.parse(rows.at(-1).at) : 0
@@ -165,15 +171,122 @@ async function checkProactive() {
     const hasNotebook = host.list().some((p) => p.id === 'memories' && p.state === 'ok')
     let notebook = ''
     if (!hasNotebook) { try { notebook = fs.readFileSync(path.join(paths.shared, 'notebook.md'), 'utf8').trim().slice(0, 1500) } catch {} }
-    log('[主动开口] 条件都满足，问问她要不要说话')
-    const parts = await chat.ask({ note: proactiveNote({ now, lastChatAt, last, notebook }) })
+    // 一起看：「留着以后」里有预习好的，告诉她可以邀请（邀不邀请她自己定）
+    const candidate = watchCfg().invite && !invite ? inviteCandidate({ file: paths.taste }) : null
+    log('[主动开口] 条件都满足，问问她要不要说话' + (candidate ? `（可以邀请一起看 ${candidate.bv}）` : ''))
+    const asked = await chat.ask({ note: proactiveNote({ now, lastChatAt, last, notebook, invite: candidate }) })
+    const { parts, invited } = takeInvite(asked)
     // 问过就记一笔（没问成也记：不然接口出错时每分钟都会再问一次）
-    proactiveStore.set('state', recordTry(state, Date.now(), !!parts?.length))
-    if (!parts?.length) { log('[主动开口]', parts ? '她不想说' : '没问成'); return }
-    await herSay.deliver(parts, 'proactive')
+    proactiveStore.set('state', recordTry(state, Date.now(), !!parts.length || invited))
+    if (!parts.length && !invited) { log('[主动开口]', asked ? '她不想说' : '没问成'); return }
+    if (parts.length) await herSay.deliver(parts, 'proactive')
+    if (invited && candidate) showInvite(candidate)
   } finally {
     proactiveRunning = false
   }
+}
+
+// ── 一起看（core/watch-list.js、core/watch-session.js）─────────────────────────────────
+// 「留着以后」里预习好的视频 → 她主动开口时可以邀请 → 主人点「现在看」→ 打开那一 P、按时间冒她想说的话
+// → 时长到了或主人点结束 → 记下看到第几 P，她跟主人聊这一 P。
+// 一起看的时候（设置里能关）：前台全屏不算忙、桌宠浮在全屏窗口上面
+let watch = null    // 正在一起看：{ token, bv, part, title, preparing, session, timer }
+let invite = null   // 等主人回答的邀请：{ id, bv, part, title, parts }
+const watchCfg = () => ({ invite: true, overFullscreen: true, ...(config.get().watch ?? {}) })
+const INVITE_ACTIONS = [{ id: 'watch', label: '现在看' }, { id: 'postpone', label: '晚点再说' }, { id: 'skip', label: '不想看' }]
+const AFTER_POSTPONE = ['好～那过两天再叫你', '嗯嗯，那下次再说']
+const AFTER_SKIP = ['好吧，那这个就不看啦', '了解～不勉强你']
+const partLabel = (title, part, parts) => `「${title}」${parts > 1 ? `第 ${part} P` : ''}`
+
+function showInvite(entry) {
+  invite = { id: crypto.randomUUID(), bv: entry.bv, part: entry.nextPart ?? 1, title: entry.title || entry.bv, parts: entry.parts ?? 1 }
+  const label = partLabel(invite.title, invite.part, invite.parts)
+  sendChat({ type: 'invite', invite: { id: invite.id, text: `一起看${label}？`, actions: INVITE_ACTIONS } })
+  // 气泡上也有三个按钮（主人正看着对话框就不用了）
+  if (!(chatWin?.isVisible() && chatWin.isFocused())) {
+    petWin?.webContents.send('pet:bubble', { text: `要不要一起看${label}？`, actions: INVITE_ACTIONS, actionId: invite.id })
+    talkFor(4000)
+  }
+  log('[一起看] 邀请：', invite.bv, 'P' + invite.part)
+}
+
+// 主人回答邀请（气泡上或对话框里点的）：三种都记进分类统计
+function answerInvitation(id, choice) {
+  if (!invite || invite.id !== id) return { ok: false, error: '这个邀请已经过期了' }
+  const inv = invite
+  invite = null
+  const r = answerInvite({ file: paths.taste, videosRoot: paths.videos, bv: inv.bv, choice })
+  log('[一起看] 主人回答：', choice, r.ok ? '' : r.error)
+  sendChat({ type: 'invite-closed', id, choice })
+  petWin?.webContents.send('pet:bubble-close', { actionId: id })
+  if (choice === 'watch') startWatch(inv.bv, inv.part).catch((e) => log('[一起看] 开始不了：', String(e?.message ?? e)))
+  else herSay.deliver([pickLine(choice === 'postpone' ? AFTER_POSTPONE : AFTER_SKIP)], 'together')
+  return r
+}
+
+function pushWatch() {
+  const s = watch?.session?.status()
+  sendChat({ type: 'watch', state: watch ? { active: true, preparing: !!watch.preparing, title: watch.title, part: watch.part, parts: watch.parts, ...(s ?? {}) } : { active: false } })
+}
+
+async function startWatch(bv, part) {
+  if (watch) return { ok: false, error: '已经在一起看了' }
+  if (!config.hasApiKey() || !config.get().llm.model) return { ok: false, error: '先在设置里填好 API key 和模型' }
+  const info = partInfo({ videosRoot: paths.videos, bv, part })
+  const token = crypto.randomUUID()
+  watch = { token, bv, part, parts: info.parts, title: info.title, preparing: true }
+  pushWatch()
+  safeOpenExternal(`https://www.bilibili.com/video/${bv}/?p=${part}`)
+  log('[一起看] 开始：', bv, 'P' + part, `${info.duration} 秒，预习笔记 ${info.notes.length} 条`)
+  // 她按预习笔记写好要说的话（只调一次模型）；没写成就拿笔记凑
+  const system = personaText({ whaleConfig: readJson(paths.whaleConfig, {}) ?? {}, personaFile: paths.persona })
+  let lines = parseLines(await chat.generate({ system, prompt: linesPrompt(info), maxTokens: 900 }), info.duration)
+  if (!lines) { lines = linesFromNotes(info.notes); log('[一起看] 台词没写成，用预习笔记凑了', lines.length, '句') }
+  if (watch?.token !== token) return { ok: false, error: '还没开始就结束了' }
+  const session = createWatchSession({
+    bv, part, title: info.title, duration: info.duration, lines,
+    onLine: (l) => herSay.deliver([l.text], 'together'),
+    onEnd: (e) => { endWatch(e).catch((err) => log('[一起看] 收尾出错：', String(err?.message ?? err))) },
+  })
+  watch = { ...watch, preparing: false, session, info, timer: setInterval(() => { session.tick(); pushWatch() }, 1000) }
+  if (watchCfg().overFullscreen) petWin?.setAlwaysOnTop(true, 'screen-saver')   // 浮在全屏的视频上面
+  checkBusy()
+  pushWatch()
+  pushPet()
+  return { ok: true }
+}
+
+function controlWatch(action) {
+  if (!watch) return { ok: false, error: '现在没在一起看' }
+  if (action === 'end') {
+    if (watch.preparing) { log('[一起看] 准备时就结束了'); watch = null; pushWatch(); return { ok: true } }
+    watch.session.end()
+    return { ok: true }
+  }
+  if (!watch.session) return { ok: false, error: '她还在准备' }
+  if (action === 'pause') watch.session.pause()
+  else if (action === 'resume') watch.session.resume()
+  else return { ok: false, error: '不认识的操作' }
+  log('[一起看]', action === 'pause' ? '暂停' : '继续')
+  pushWatch()
+  pushPet()
+  return { ok: true }
+}
+
+// 一 P 结束：记进清单和视频笔记，桌宠回到平常，再问她要不要跟主人聊聊这一 P
+async function endWatch({ reason, watchedTo }) {
+  const w = watch
+  if (!w) return
+  clearInterval(w.timer)
+  watch = null
+  petWin?.setAlwaysOnTop(config.get().pet?.alwaysOnTop !== false)
+  checkBusy()
+  pushWatch()
+  pushPet()
+  finishPart({ file: paths.taste, videosRoot: paths.videos, bv: w.bv, part: w.part, watchedTo })
+  log('[一起看] 结束：', w.bv, 'P' + w.part, reason === 'time' ? '看完了' : `主人点了结束（看到 ${watchedTo} 秒）`)
+  const parts = await chat.ask({ note: watchEndNote({ title: w.title, part: w.part, parts: w.parts, watchedTo, duration: w.info.duration, reason }) })
+  if (parts?.length) await herSay.deliver(parts, 'together')
 }
 
 // ── 做梦（core/dreams.js）：她在桌宠上睡着了 → 每晚最多一个梦，存进 ~/.dsh/whale-dreams.md ─────────────
@@ -427,6 +540,15 @@ function openMenu() {
       item('busy-until', '🔕', '我在忙（直到我说）', () => setManualBusy('until'))
     }
   }
+  // 一起看：正在看就能暂停 / 继续 / 结束；清单随时能打开
+  sep()
+  if (watch) {
+    const paused = watch.session?.status().paused
+    if (watch.session) item('watch-toggle', paused ? '▶' : '⏸', paused ? '继续一起看' : '暂停一起看', () => controlWatch(paused ? 'resume' : 'pause'))
+    item('watch-end', '⏹', '结束一起看', () => controlWatch('end'), { hint: watch.preparing ? '她还在准备' : '' })
+  }
+  const waiting = laterEntries(paths.taste).length
+  item('watch-list', '🎬', '一起看的清单', () => { showChat(); sendChat({ type: 'open-watch-list' }) }, { hint: waiting ? `${waiting} 个` : '还是空的' })
   sep()
   item('settings', '⚙', '设置…', () => { showChat(); sendChat({ type: 'open-settings' }) })
   const onTop = config.get().pet?.alwaysOnTop !== false
@@ -552,6 +674,8 @@ function registerIpc() {
   // 点她只打开（或拿到前面），不关；关对话框用它自己的 × 或右键菜单
   on('pet:click', showChat)
   on('pet:bubble-click', showChat)
+  // 气泡上的按钮（一起看的邀请）：{ id, choice }
+  on('pet:bubble-action', (a) => { if (['watch', 'postpone', 'skip'].includes(a?.choice)) answerInvitation(String(a?.id), a.choice) })
   on('pet:menu', openMenu)
   // 桌宠换了动画：记一笔（"她一直在播某段动画"时，看日志就知道是哪个状态在播哪段）
   on('pet:anim', (a) => {
@@ -644,7 +768,8 @@ function registerIpc() {
     return { baseUrl: c.llm.baseUrl, model: c.llm.model, hasKey: config.hasApiKey(), encrypted: safeStorage.isEncryptionAvailable(), plugins: host.list(), pluginDir: paths.userPlugins, sharedDir: paths.shared,
       busy: { manual: c.busy?.manual !== false, fullscreen: c.busy?.fullscreen !== false }, idleEvery: idleEvery(),
       greet: { entrance: c.pet?.entrance !== false, exit: c.pet?.exit !== false },
-      talk: { followUp: { enabled: c.chat?.followUp?.enabled !== false, maxRounds: c.chat?.followUp?.maxRounds ?? 2 }, proactive: c.proactive } }
+      talk: { followUp: { enabled: c.chat?.followUp?.enabled !== false, maxRounds: c.chat?.followUp?.maxRounds ?? 2 }, proactive: c.proactive },
+      watch: watchCfg() }
   })
   // 忙碌感知的两个开关（设置面板里一勾就存，不用点保存）
   // 待机小动作的间隔（分钟）：1–60，最少不能比最多大（一改就存）
@@ -679,6 +804,26 @@ function registerIpc() {
       log('[设置] 主动开口：', p.enabled ? `至少隔 ${gap} 分钟，每天最多 ${daily} 次，${qs}–${qe} 点不打扰` : '关')
     }
     return f || p ? { ok: true } : { ok: false, error: '格式不对' }
+  })
+  // ── 一起看 ──
+  const WATCH_CHOICES = ['watch', 'postpone', 'skip']
+  handle('watch:answer', (a) => (WATCH_CHOICES.includes(a?.choice) ? answerInvitation(String(a?.id), a.choice) : { ok: false, error: '格式不对' }))
+  handle('watch:control', (a) => (['pause', 'resume', 'end'].includes(a?.action) ? controlWatch(a.action) : { ok: false, error: '格式不对' }))
+  handle('watch:list', () => ({ items: listView({ file: paths.taste }), active: watch ? { bv: watch.bv, part: watch.part } : null }))
+  // 清单里手动点「现在一起看」：从下一 P 开始（没预习也行，她会少说点具体内容）
+  handle('watch:start', async (a) => {
+    const e = laterEntries(paths.taste).find((x) => x.bv === String(a?.bv))
+    if (!e) return { ok: false, error: '清单里没有这个视频' }
+    return startWatch(e.bv, e.nextPart ?? 1)
+  })
+  // 一起看的两个开关：邀请、全屏时浮在上面（一勾就存）
+  handle('settings:watch', (a) => {
+    const patch = {}
+    for (const k of ['invite', 'overFullscreen']) if (typeof a?.[k] === 'boolean') patch[k] = a[k]
+    if (!Object.keys(patch).length) return { ok: false }
+    config.update({ watch: patch })
+    log('[设置] 一起看：', patch)
+    return { ok: true }
   })
   // 入场 / 退出动画的两个开关（一勾就存；入场下次启动时生效）
   handle('settings:greet', (a) => {
@@ -782,7 +927,8 @@ app.whenReady().then(async () => {
   busy = createBusy({
     idleSec: () => powerMonitor.getSystemIdleTime(),
     fullscreen: () => fsWatch?.isFullscreen() ?? false,
-    settings: () => config.get().busy ?? {},
+    // 一起看的时候（设置里没关）：前台全屏是在看视频，不算忙
+    settings: () => ({ ...(config.get().busy ?? {}), ...(watch && watchCfg().overFullscreen ? { fullscreen: false } : {}) }),
     manual: config.get().busyManual,
   })
   syncFullscreenWatch()
@@ -795,6 +941,16 @@ app.whenReady().then(async () => {
   setInterval(() => checkProactive().catch((e) => log('[主动开口] 出错：', String(e?.message ?? e))), 60_000)
   // 让她知道主人现在 / 刚才在忙（放在「DSH 那边的状态」之后、「现在几点」之前）
   await host.load({ id: 'busy', name: '忙碌感知', setup(api) { api.registerContext({ id: 'busy', order: 950, build: () => busy.contextLine() }) } })
+  // 一起看的时候，聊天里的她知道你们正在看什么、看到哪了
+  await host.load({ id: 'watch-together', name: '一起看', setup(api) {
+    api.registerContext({ id: 'now', order: 945, build: () => {
+      const s = watch?.session?.status()
+      if (!watch) return ''
+      return `［一起看］你正在和主人一起看${partLabel(watch.title, watch.part, watch.parts)}` +
+        (s ? `，现在大概看到 ${Math.floor(s.elapsed / 60)} 分 ${s.elapsed % 60} 秒（这一段一共 ${Math.round(s.duration / 60)} 分钟）${s.paused ? '，暂停着' : ''}` : '，刚开始') +
+        '。他这时候跟你说话，就当是边看边聊。'
+    } })
+  } })
   await host.loadUserPlugins(paths.userPlugins)
   chat = createChat({ host, chatLog, bus, ui, getConfig: () => config.get(), getApiKey: () => config.getApiKey(), log, describeSticker: lookAt })
   herSay = createHerSay({

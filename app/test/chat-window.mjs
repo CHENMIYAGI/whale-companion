@@ -60,6 +60,8 @@ const answers = {
   'chat:send': () => sendResult,
   'chat:abort': () => true, 'chat:confirm': () => true, 'chat:hide': () => true, 'open:video': () => true, 'open:deepseek': () => true, 'dsh:pause': () => ({ ok: true }), 'settings:busy': () => ({ ok: true }), 'settings:pet': (a) => (a.idleExtraMin <= a.idleExtraMax ? { ok: true } : { ok: false, error: '最少不能比最多大' }),
   'settings:get': () => settings,
+  'watch:answer': () => ({ ok: true }), 'watch:control': () => ({ ok: true }), 'watch:start': () => ({ ok: true }),
+  'watch:list': () => ({ active: null, items: [{ bv: 'BV1aaaaaaaaa', title: '鲸鱼纪录片', nextPart: 2, parts: 2, previewed: true, watchedParts: [1], postponedUntil: null }] }),
   'sticker:mine': () => listMine(stickerPaths.myStickers).map(({ box, id, name }) => ({ box, id, name })),
   'sticker:import': (a) => { const r = saveReceived(stickerPaths.received, Buffer.from(a.bytes), a.name); return r.ok ? { ok: true, sticker: { box: r.sticker.box, id: r.sticker.id, name: r.sticker.name }, inMine: false } : r },
   'sticker:favorite': () => ({ ok: true }),
@@ -273,6 +275,25 @@ app.whenReady().then(async () => {
   event({ type: 'delta', id: 'm2', text: '它会弹钢琴！' }); event({ type: 'end', id: 'm2', message: { text: '它会弹钢琴！' } }); status('idle'); await wait(150)
   console.log(`  两条各一个气泡：${await js(`[...document.querySelectorAll('.msg.her .text')].slice(-2).map(e => e.textContent).join(' | ')`)}`)
   await shot('multi-done')
+
+  console.log('\n【一起看】')
+  event({ type: 'invite', invite: { id: 'inv1', text: '一起看「鲸鱼纪录片」第 1 P？', actions: [{ id: 'watch', label: '现在看' }, { id: 'postpone', label: '晚点再说' }, { id: 'skip', label: '不想看' }] } })
+  await wait(150)
+  console.log(`  邀请卡片三个按钮：${await js(`[...document.querySelectorAll('.card.invite button')].map(b => b.textContent).join(' / ')`)}`)
+  await js(`document.querySelectorAll('.card.invite button')[1].click()`); await wait(150)
+  console.log(`  点「晚点再说」发过去：${JSON.stringify(sentOn('watch:answer').at(-1)?.[1])}，卡片：${await js(`document.querySelector('.card.invite .result')?.textContent`)}`)
+  event({ type: 'watch', state: { active: true, title: '鲸鱼纪录片', part: 2, parts: 2, elapsed: 75, duration: 600, paused: false } }); await wait(100)
+  console.log(`  顶上那条：${await js(`document.getElementById('watchInfo').textContent`)}  ${ok(await visible('watchBar'))}`)
+  await click('#btnWatchToggle'); await wait(100)
+  console.log(`  点「暂停」发过去：${JSON.stringify(sentOn('watch:control').at(-1)?.[1])}`)
+  await shot('watch-bar')
+  event({ type: 'watch', state: { active: false } }); await wait(100)
+  console.log(`  结束后那条收起来：${ok(!(await visible('watchBar')))}`)
+  event({ type: 'open-watch-list' }); await wait(300)
+  console.log(`  清单打开了：${ok(await visible('watchList'))}，${await js(`[...document.querySelectorAll('#watchItems li')].map(li => li.textContent).join(' || ')`)}`)
+  await shot('watch-list')
+  await click('#watchItems button'); await wait(150)
+  console.log(`  点「现在一起看」发过去：${JSON.stringify(sentOn('watch:start').at(-1)?.[1])}，清单关了：${ok(!(await visible('watchList')))}`)
 
   console.log('\n【关闭】')
   await click('#btnClose'); await wait(50)

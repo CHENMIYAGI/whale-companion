@@ -21,7 +21,22 @@
     </div>
   </header>
 
+  <!-- 一起看的时候：看什么、看到哪了、暂停 / 继续 / 结束 -->
+  <div id="watchBar" hidden>
+    <span id="watchInfo"></span>
+    <button id="btnWatchToggle" type="button">暂停</button>
+    <button id="btnWatchEnd" type="button">结束</button>
+  </div>
+
   <main id="messages"></main>
+
+  <!-- 一起看的清单（右键「一起看的清单」打开） -->
+  <section id="watchList" hidden>
+    <h2>一起看的清单</h2>
+    <p class="hint">她留着想陪你一起看的视频（「留着以后」）。预习好了的，她找你说话时可能会邀请你。</p>
+    <ul id="watchItems"></ul>
+    <div class="row end"><button id="btnWatchListClose" type="button">返回</button></div>
+  </section>
 
   <!-- 表情面板：主人自己的收藏（~/.whale-companion/my-stickers/），点一张就发 -->
   <section id="stickerPanel" hidden>
@@ -79,6 +94,10 @@
     <p class="hint">只在你坐在电脑前、没在忙、你们有一阵子没聊的时候；说不说由她。</p>
 
     <!-- 入场 / 退出动画：勾了就存 -->
+    <h3>一起看</h3>
+    <label class="check"><input id="setWatchInvite" type="checkbox"> 她找我说话时，可以邀请我一起看「留着以后」里的视频</label>
+    <label class="check"><input id="setWatchOverFs" type="checkbox"> 一起看时全屏不算忙，桌宠浮在全屏窗口上面</label>
+
     <h3>来和走</h3>
     <label class="check"><input id="setEntrance" type="checkbox"> 启动时淡入、挥手打招呼（下次启动生效）</label>
     <label class="check"><input id="setExit" type="checkbox"> 退出时挥手说再见再淡出（最多 3 秒；关机时不等）</label>

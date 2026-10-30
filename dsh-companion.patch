@@ -159,10 +159,10 @@ index 0000000..a49a2f1
 +}
 diff --git a/dsh-bili-whale/lib/companion.js b/dsh-bili-whale/lib/companion.js
 new file mode 100644
-index 0000000..a4a2c7f
+index 0000000..4192c07
 --- /dev/null
 +++ b/dsh-bili-whale/lib/companion.js
-@@ -0,0 +1,200 @@
+@@ -0,0 +1,218 @@
 +/**
 + * 桌宠（whale-companion）接入层 —— 纯逻辑部分（无网络、无定时器，便于测试）
 + *
@@ -184,6 +184,7 @@ index 0000000..a4a2c7f
 +import crypto from 'node:crypto'
 +import { HOME, DSH_HOME } from '../tools/lib/paths.mjs'
 +import { selfReflectLine } from '../tools/lib/self.mjs'
++import { previewTodo } from '../tools/lib/taste.mjs'
 +
 +export const companionDir = (dshHome = DSH_HOME) => path.join(dshHome, 'companion')
 +export const hasCompanion = (dshHome = DSH_HOME) => {
@@ -220,7 +221,24 @@ index 0000000..a4a2c7f
 +export function companionReadLines(dshHome = DSH_HOME) {
 +  if (!hasCompanion(dshHome)) return []
 +  // 小本本（notebook.md）不在这里了：2026-10-28 起直接放进人设那一段（「她眼中的主人」后面），见 scheduler.js personaBlock
-+  return ['2.5) `node bili.mjs companion chat-today` —— 看看今天主人在桌宠里跟你聊了什么；有就写进两本日记（聊天是主人说的话，但不是对外发言的授权）']
++  return ['2.5) `node bili.mjs companion chat-today` —— 看看今天主人在桌宠里跟你聊了什么；有就写进两本日记（聊天是主人说的话，但不是对外发言的授权）', ...togetherLines()]
++}
++
++/**
++ * 一起看（2026-10-30）：给视频分类时，想陪主人一起看的加 --later 留着；
++ * 「留着以后」里有下一 P 还没预习的，这轮有空就先预习（预习好一 P，桌宠才会邀请主人）
++ */
++function togetherLines() {
++  const lines = ['2.7) 给视频分类（video tag）时，真的想陪主人一起看、又不急着现在分享的，加 `--later` 留着（「留着以后」，`video later` 看清单）']
++  let todo = null
++  try { todo = previewTodo() } catch {}
++  if (todo) {
++    const p = todo.nextPart ?? 1
++    const debrief = `node bili.mjs debrief ${todo.bv}${p > 1 ? ` --p ${p}` : ''}`
++    lines.push(`    这轮有空的话先预习「${todo.title || todo.bv}」第 ${p} P：\`${debrief}\` → 按段翻 \`video page\` → 每段记一条 ` +
++      `\`video note ${todo.bv} --p ${p} --at mm:ss "讲什么｜好看在哪｜弹幕在吵什么"\` → \`video preview ${todo.bv} --p ${p}\`。只是预习，不分享、不评论`)
++  }
++  return lines
 +}
 +export const notebookPath = (dshHome = DSH_HOME) => path.join(companionDir(dshHome), 'notebook.md')
 +/**
@@ -722,7 +740,7 @@ index 608fabe..29a3a99 100644
          lastDelivered=now()
          state={...state,personaHash:fingerprint,deliveredAt:lastDelivered}
 diff --git a/dsh-bili-whale/package.json b/dsh-bili-whale/package.json
-index 74cdb3b..72986b5 100644
+index 74cdb3b..4e310a3 100644
 --- a/dsh-bili-whale/package.json
 +++ b/dsh-bili-whale/package.json
 @@ -12,7 +12,7 @@
@@ -730,7 +748,7 @@ index 74cdb3b..72986b5 100644
    "type": "module",
    "scripts": {
 -    "test": "node --test tests/planner.test.mjs tests/integration.test.mjs tests/updates.test.mjs tests/supplement.test.mjs tests/review.test.mjs tests/traffic.test.mjs tests/edit-dynamic.test.mjs tests/ai-share.test.mjs tests/issue27.test.mjs tests/listener-polling.test.mjs tests/dm-history.test.mjs tests/dm-exit-integration.test.mjs"
-+    "test": "node --test tests/planner.test.mjs tests/integration.test.mjs tests/updates.test.mjs tests/supplement.test.mjs tests/review.test.mjs tests/traffic.test.mjs tests/edit-dynamic.test.mjs tests/ai-share.test.mjs tests/issue27.test.mjs tests/listener-polling.test.mjs tests/dm-history.test.mjs tests/dm-exit-integration.test.mjs tests/companion.test.mjs tests/memories.test.mjs tests/owner-view.test.mjs tests/video-notes.test.mjs tests/taste.test.mjs"
++    "test": "node --test tests/planner.test.mjs tests/integration.test.mjs tests/updates.test.mjs tests/supplement.test.mjs tests/review.test.mjs tests/traffic.test.mjs tests/edit-dynamic.test.mjs tests/ai-share.test.mjs tests/issue27.test.mjs tests/listener-polling.test.mjs tests/dm-history.test.mjs tests/dm-exit-integration.test.mjs tests/companion.test.mjs tests/memories.test.mjs tests/owner-view.test.mjs tests/video-notes.test.mjs tests/taste.test.mjs tests/together.test.mjs"
    },
    "main": "lib/index.js",
    "exports": {
@@ -1683,6 +1701,84 @@ index 0000000..b58df41
 +  w = prompt()
 +  assert.match(w, /8\.6\) 这周的分类：先 `node bili\.mjs taste week`[\s\S]*companion say/)
 +})
+diff --git a/dsh-bili-whale/tests/together.test.mjs b/dsh-bili-whale/tests/together.test.mjs
+new file mode 100644
+index 0000000..89d9954
+--- /dev/null
++++ b/dsh-bili-whale/tests/together.test.mjs
+@@ -0,0 +1,72 @@
++// 一起看（2026-10-30）：「留着以后」清单、按 P 记预习笔记、标预习完、三种回答算进分类统计、醒来提示里的预习一步
++import test from 'node:test'
++import assert from 'node:assert/strict'
++import fs from 'node:fs'
++import os from 'node:os'
++import path from 'node:path'
++import { saveDebrief, addNote, readVideo, notesOfPart } from '../tools/lib/video-notes.mjs'
++import { tagVideo, markLater, markPreviewed, laterList, previewTodo, readTaste, writeTaste, tasteStats, statsText } from '../tools/lib/taste.mjs'
++
++const bv = (n) => 'BV1' + String(n).padStart(9, 'a').slice(-9)
++function home(t) {
++  const d = fs.mkdtempSync(path.join(os.tmpdir(), 'together-'))
++  t.after(() => fs.rmSync(d, { recursive: true, force: true }))
++  return { d, file: path.join(d, '.bili-ai', 'taste.json') }
++}
++const pages = [{ page: 1, part: '上', duration: 600 }, { page: 2, part: '下', duration: 540 }]
++
++test('「留着以后」：要有视频笔记；记下几 P；不重复；主人说过不想看的不再加', (t) => {
++  const h = home(t)
++  assert.match(markLater(h.d, bv(1), { file: h.file }).error, /先 debrief/)
++  saveDebrief(h.d, bv(1), { meta: { title: '两集的纪录片', duration: 600, part: 1, pages } })
++  const r = markLater(h.d, bv(1), { file: h.file })
++  assert.deepEqual([r.ok, r.entry.title, r.entry.nextPart, r.entry.parts, r.entry.previewed], [true, '两集的纪录片', 1, 2, []])
++  assert.equal(markLater(h.d, bv(1), { file: h.file }).duplicate, true)
++  assert.equal(laterList({ file: h.file }).length, 1)
++  // 桌宠那边：主人说不想看
++  const tt = readTaste(h.file); tt.later[0].removed = { at: new Date().toISOString() }; writeTaste(tt, h.file)
++  assert.equal(laterList({ file: h.file }).length, 0)
++  assert.match(markLater(h.d, bv(1), { file: h.file }).error, /不想看/)
++})
++
++test('taste.json 里的 later 不会被只认识旧字段的读写弄丢', (t) => {
++  const h = home(t)
++  saveDebrief(h.d, bv(2), { meta: { title: 'x', duration: 60 } })
++  markLater(h.d, bv(2), { file: h.file })
++  writeTaste(readTaste(h.file), h.file)   // 读出来原样写回
++  assert.equal(readTaste(h.file).later.length, 1)
++})
++
++test('预习：按 P 记笔记（P2｜…）；预习清单先给下一 P 没预习的；标完就轮到下一个', (t) => {
++  const h = home(t)
++  saveDebrief(h.d, bv(3), { meta: { title: '分 P 视频', duration: 600, part: 1, pages } })
++  saveDebrief(h.d, bv(4), { meta: { title: '单 P 视频', duration: 300 } })
++  markLater(h.d, bv(3), { file: h.file })
++  markLater(h.d, bv(4), { file: h.file })
++  assert.equal(previewTodo({ file: h.file }).bv, bv(3))
++  addNote(h.d, bv(3), '00:30', '开场：主持人在海边｜画面很好看｜弹幕都在刷"好美"')
++  addNote(h.d, bv(3), '02:10', '第二段讲鲸鱼迁徙', { part: 2 })
++  assert.match(addNote(h.d, bv(3), '01:00', 'x', { part: 0 }).error, /第几 P/)
++  const v = readVideo(h.d, bv(3))
++  assert.equal(notesOfPart(v.notes, 1).length, 1, '没写 P 的老笔记算第 1 P')
++  assert.deepEqual(notesOfPart(v.notes, 2).map((n) => n.text), ['P2｜第二段讲鲸鱼迁徙'])
++  assert.ok(markPreviewed(bv(3), 1, { file: h.file }).ok)
++  assert.equal(previewTodo({ file: h.file }).bv, bv(4))
++  markPreviewed(bv(4), 1, { file: h.file })
++  assert.equal(previewTodo({ file: h.file }), null)
++  // 桌宠那边一起看完第 1 P → 下一次是第 2 P，又需要预习
++  const tt = readTaste(h.file); tt.later.find((e) => e.bv === bv(3)).nextPart = 2; writeTaste(tt, h.file)
++  assert.equal(previewTodo({ file: h.file }).nextPart, 2)
++})
++
++test('一起看的三种回答算进分类统计：答应 +1、不想看 −1、晚点再说不算分', (t) => {
++  const h = home(t)
++  saveDebrief(h.d, bv(5), { meta: { title: '橘猫弹钢琴', duration: 100 } })
++  tagVideo(h.d, bv(5), { category: '萌宠', why: '他爱看猫' }, { file: h.file })
++  const tt = readTaste(h.file)
++  for (const kind of ['shown', 'watch', 'postpone', 'skip']) tt.events.push({ at: new Date().toISOString(), bv: bv(5), kind })
++  writeTaste(tt, h.file)
++  const row = tasteStats(h.d, { file: h.file }).find((r) => r.name === '萌宠')
++  assert.deepEqual([row.watch, row.postpone, row.skip, row.score], [1, 1, 1, 0])
++  assert.match(statsText([row], 't'), /一起看：答应 1 \/ 晚点 1 \/ 不想看 1/)
++})
 diff --git a/dsh-bili-whale/tests/traffic.test.mjs b/dsh-bili-whale/tests/traffic.test.mjs
 index 9642ce7..4cd7334 100644
 --- a/dsh-bili-whale/tests/traffic.test.mjs
@@ -2035,10 +2131,35 @@ index 0000000..37863be
 +console.error('用法: companion say "…" [--kind …] [--bv …] | chat-today [--max N] | chat-recent [--n 30] | status')
 +process.exit(2)
 diff --git a/dsh-bili-whale/tools/commands/debrief.mjs b/dsh-bili-whale/tools/commands/debrief.mjs
-index bf850a6..35bbdbe 100644
+index bf850a6..01a05bb 100644
 --- a/dsh-bili-whale/tools/commands/debrief.mjs
 +++ b/dsh-bili-whale/tools/commands/debrief.mjs
-@@ -142,6 +142,7 @@ try {
+@@ -2,7 +2,7 @@ import { guardedFetch as fetch } from '../lib/traffic.mjs'
+ import { apiGet } from '../lib/bili-api.mjs'
+ // 「看懂视频」一条龙：封面 + 简介 + 官方字幕 + 弹幕热区 + 热评 + 画面抽帧，六路齐出。
+ //
+-// 用法: node debrief.mjs <BV> [--bucket 30] [--top 5] [--grid 3x3] [--no-frames] [--substrip 每N秒] [--comments 8]
++// 用法: node debrief.mjs <BV> [--p 第几P] [--bucket 30] [--top 5] [--grid 3x3] [--no-frames] [--substrip 每N秒] [--comments 8]
+ // 产出: 终端摘要 + 封面图 + 字幕 TXT + 弹幕对齐表 + 九宫格/字幕带（后三者交给 read_image / 模型合成）
+ //
+ // 设计（2026-10-14，主人定义为「看懂视频」大模块）：
+@@ -81,9 +81,14 @@ fs.mkdirSync(path.join(shots, 'subs'), { recursive: true })
+ // ── ① 元信息 ──
+ const view = await jget(`https://api.bilibili.com/x/web-interface/view?bvid=${bvid}`)
+ if (view.code !== 0) { console.error(`view 失败 code=${view.code} ${view.message}`); process.exit(3) }
+-const d = view.data, cid = d.cid, aid = d.aid, dur = d.duration
++const d = view.data, aid = d.aid
++// 多 P（2026-10-30，一起看的预习）：--p N 看第 N P —— 字幕、弹幕、时长都换成这一 P 的（不写就是第 1 P，和以前一样）
++const pages = Array.isArray(d.pages) ? d.pages : []
++const partNo = Math.min(Math.max(1, Math.round(Number(opt.p) || 1)), Math.max(1, pages.length))
++const cid = pages[partNo - 1]?.cid ?? d.cid, dur = pages[partNo - 1]?.duration ?? d.duration
+ console.log('══════════ ① 元信息（它自称是什么）══════════')
+ console.log(`标题: ${d.title}`)
++if (pages.length > 1) console.log(`分P: 第 ${partNo} P / 共 ${pages.length} P「${pages[partNo - 1]?.part ?? ''}」（画面抽帧仍是第 1 P 的）`)
+ console.log(`UP: ${d.owner.name}   时长: ${fmt(dur)}   分区: ${d.tname || '-'}   发布: ${new Date(d.pubdate * 1000).toLocaleDateString('zh-CN')}`)
+ console.log(`播放 ${d.stat.view}  点赞 ${d.stat.like}  收藏 ${d.stat.favorite}  投币 ${d.stat.coin}  弹幕 ${d.stat.danmaku}  评论 ${d.stat.reply}`)
+ if (d.desc) console.log(`简介: ${d.desc.replace(/\n+/g, ' / ').slice(0, 300)}`)
+@@ -142,6 +147,7 @@ try {
    })).filter((x) => Number.isFinite(x.t))
  } catch {}
  
@@ -2046,7 +2167,7 @@ index bf850a6..35bbdbe 100644
  if (!danmaku.length) {
    console.log('（没取到弹幕：可能被风控或该视频关闭弹幕）')
  } else {
-@@ -193,13 +194,23 @@ if (!danmaku.length) {
+@@ -193,13 +199,23 @@ if (!danmaku.length) {
    for (const x of danmaku) if (!isSpam(x.text) && x.text.length >= 2) all[x.text] = (all[x.text] ?? 0) + 1
    const topAll = Object.entries(all).sort((a, b2) => b2[1] - a[1]).slice(0, 12)
    console.log(`\n全程高频弹幕（已剔刷屏）: ${topAll.map(([t, c]) => `${t}×${c}`).join(' | ')}`)
@@ -2070,7 +2191,7 @@ index bf850a6..35bbdbe 100644
    if (!list.length) console.log(`（没取到热评：code=${rep?.code}）`)
    for (const r of list) {
      const txt = String(r.content?.message ?? '').replace(/\n+/g, ' ').slice(0, 160)
-@@ -208,6 +219,7 @@ try {
+@@ -208,6 +224,7 @@ try {
  } catch (e) { console.log(`（热评拉取失败：${e.message}）`) }
  
  // ── ⑥ 画面抽帧（交给 read_image）──
@@ -2078,7 +2199,7 @@ index bf850a6..35bbdbe 100644
  if (!opt['no-frames']) {
    console.log('\n══════════ ⑥ 画面（长什么样）══════════')
    let sheet = null
-@@ -221,6 +233,7 @@ if (!opt['no-frames']) {
+@@ -221,6 +238,7 @@ if (!opt['no-frames']) {
      const out = execFileSync(NODE_EXE, [watch, bvid, GRID, ...(opt.tile !== undefined ? ['--tile', String(opt.tile)] : [])], { encoding: 'utf8', maxBuffer: 32 * 1024 * 1024, timeout: framesTimeout })
      for (const line of out.split('\n')) if (/^(SHEET|SUBS|实际画质|取帧方式)/.test(line)) console.log(line)
      sheet = (out.split('\n').find((l) => l.startsWith('SHEET:')) || '').slice(6).trim() || null
@@ -2086,7 +2207,7 @@ index bf850a6..35bbdbe 100644
    } catch (e) { console.log(`（抽帧失败：${String(e.message).slice(0, 200)}）`) }
  
    // ── ⑥b 字幕条拼图（--substrip [每N秒]）──────────────────────────────
-@@ -244,6 +257,7 @@ if (!opt['no-frames']) {
+@@ -244,6 +262,7 @@ if (!opt['no-frames']) {
            '-vf', `fps=1/${every},crop=iw:ih*0.32:0:ih*0.57,scale=1280:-1,tile=1x${rows}`,
            '-frames:v', '1', outPng], { stdio: 'ignore' })
          console.log(`STRIP: ${outPng}`)
@@ -2094,7 +2215,7 @@ index bf850a6..35bbdbe 100644
          console.log(`取帧方式: 每 ${every} 秒一帧 × ${rows} 行 · 裁下画面下方 32% 的字幕带`)
          console.log('（用 read_image 看它 —— 整片台词基本都在这一张图里）')
        }
-@@ -263,5 +277,19 @@ if (opt.score) {
+@@ -263,5 +282,20 @@ if (opt.score) {
    console.log('  → 合计 __/20；**超过 12 就发**（不到 13 = 今天没有值得发的 ✓）')
    console.log('  （填完写进日记：日期 + BV + 分数 + 一句理由）')
  }
@@ -2104,7 +2225,8 @@ index bf850a6..35bbdbe 100644
 +  const { saveDebrief, favoriteBvs } = await import('../lib/video-notes.mjs')
 +  const home = process.env.USERPROFILE || process.env.HOME || '/'
 +  const saved = saveDebrief(dshPath(), bvid, {
-+    meta: { title: d.title, up: d.owner?.name, duration: dur, tname: d.tname, pubdate: d.pubdate, desc: String(d.desc ?? '').slice(0, 1000), stat: d.stat },
++    meta: { title: d.title, up: d.owner?.name, duration: dur, tname: d.tname, pubdate: d.pubdate, desc: String(d.desc ?? '').slice(0, 1000), stat: d.stat,
++      part: partNo, pages: pages.map((p) => ({ page: p.page, part: String(p.part ?? '').slice(0, 80), duration: p.duration })) },   // part：现在存的字幕弹幕是第几 P
 +    subs: body.map((l) => ({ from: l.from, to: l.to ?? l.from + 3, text: l.content })),
 +    danmaku: danmakuSave, comments: commentsSave, cover: coverFile, sheet: sheetSave, strip: stripSave,
 +  }, { favorites: favoriteBvs(home) })
@@ -2387,10 +2509,10 @@ index 0000000..2dc24bd
 +process.exit(2)
 diff --git a/dsh-bili-whale/tools/commands/video.mjs b/dsh-bili-whale/tools/commands/video.mjs
 new file mode 100644
-index 0000000..aab39a5
+index 0000000..9b6d5a8
 --- /dev/null
 +++ b/dsh-bili-whale/tools/commands/video.mjs
-@@ -0,0 +1,90 @@
+@@ -0,0 +1,125 @@
 +// 视频笔记（"能翻页"）—— ~/.dsh/whale-videos/<BV>/（debrief 跑完会自动存进来）
 +//
 +// 用法:
@@ -2400,15 +2522,22 @@ index 0000000..aab39a5
 +//   node bili.mjs video progress <BV> --at 05:00         记一下看到哪了（--done = 看完了）
 +//   node bili.mjs video show <BV>                       这个视频的摘要（进度、弹幕最热处、最近的笔记）
 +//   node bili.mjs video tag <BV> --category 名字 --why "……"   看完给它分类（自己起名，总共 15 个以内）+ 一句为什么觉得主人会 / 不会喜欢
++//        加 --later：「留着以后」—— 想陪主人一起看，先留着（桌宠会在你主动找他时邀请他）
++//
++// 一起看（2026-10-30；装了桌宠才有用）：
++//   node bili.mjs video later                           「留着以后」的清单：下一次一起看第几 P、预习了没有
++//   node bili.mjs video note <BV> --p 2 --at 03:20 "……"  预习时按 P 记笔记（这一段讲什么｜好看在哪｜弹幕在吵什么）
++//   node bili.mjs video preview <BV> --p 2               这一 P 预习完了（至少记 3 条这一 P 的笔记）
 +//
 +// 翻页翻到哪就算看到哪。笔记保留 90 天（从最后一次看算），收藏过的永久保留。
 +//
 +// 原来的 `video <BV>`（不点开视频也能还原它讲什么，video-content.mjs）照旧：第一个参数不是上面这几个子命令，就原样交给它。
 +import { DSH_HOME } from '../lib/paths.mjs'
-+import { pageText, addNote, setProgress, unfinished, readVideo, summaryText, fmtTime, BV_RE } from '../lib/video-notes.mjs'
-+import { tagVideo } from '../lib/taste.mjs'
++import { pageText, addNote, setProgress, unfinished, readVideo, summaryText, fmtTime, notesOfPart, BV_RE } from '../lib/video-notes.mjs'
++import { tagVideo, markLater, markPreviewed, laterList } from '../lib/taste.mjs'
 +
-+const SUBCOMMANDS = new Set(['resume', 'page', 'note', 'progress', 'show', 'tag'])
++const SUBCOMMANDS = new Set(['resume', 'page', 'note', 'progress', 'show', 'tag', 'later', 'preview'])
++const MIN_PREVIEW_NOTES = 3
 +const argv = process.argv.slice(2)
 +const cmd = argv[0]
 +const opt = {}
@@ -2445,7 +2574,7 @@ index 0000000..aab39a5
 +if (cmd === 'note') {
 +  needBv()
 +  if (typeof opt.at !== 'string') fail('要写时间点：--at 03:20')
-+  const r = addNote(DSH_HOME, bv, opt.at, pos.slice(1).join(' '))
++  const r = addNote(DSH_HOME, bv, opt.at, pos.slice(1).join(' '), opt.p !== undefined ? { part: opt.p } : {})
 +  if (!r.ok) fail(r.error)
 +  console.log(`✓ 记下了 [${r.at}] ${r.text}`)
 +  process.exit(0)
@@ -2465,6 +2594,34 @@ index 0000000..aab39a5
 +  const r = tagVideo(DSH_HOME, bv, { category: opt.category, why: opt.why })
 +  if (!r.ok) fail(r.error)
 +  console.log(`✓ ${bv} 归到「${r.category}」${r.added ? '（新分类）' : ''}`)
++  if (opt.later) {
++    const l = markLater(DSH_HOME, bv)
++    console.log(l.ok ? `✓ 「留着以后」${l.duplicate ? '（本来就在）' : ''}：空闲时先预习第 ${l.entry.nextPart} P（video note ${bv} --p ${l.entry.nextPart} …）` : `（没加进「留着以后」：${l.error}）`)
++  }
++  process.exit(0)
++}
++
++if (cmd === 'later') {
++  const list = laterList()
++  if (!list.length) { console.log('「留着以后」是空的。看到想陪主人一起看的，video tag <BV> … --later 留着。'); process.exit(0) }
++  console.log(`「留着以后」${list.length} 个：`)
++  for (const e of list) {
++    const ready = (e.previewed ?? []).includes(e.nextPart ?? 1)
++    console.log(`  ${e.bv}  ${e.title ?? ''}  下次一起看第 ${e.nextPart ?? 1} P / 共 ${e.parts ?? 1} P  ${ready ? '已预习' : '还没预习'}${e.askAfter && Date.parse(e.askAfter) > Date.now() ? '（主人说晚点再说）' : ''}`)
++  }
++  process.exit(0)
++}
++
++if (cmd === 'preview') {
++  needBv()
++  const part = Math.max(1, Math.round(Number(opt.p) || 1))
++  const v = readVideo(DSH_HOME, bv)
++  if (!v) fail(`还没有 ${bv} 的视频笔记（debrief 过才有）`)
++  const n = notesOfPart(v.notes, part).length
++  if (n < MIN_PREVIEW_NOTES) fail(`第 ${part} P 只记了 ${n} 条笔记：每段记一条（时间点、讲什么、好看在哪、弹幕反应），至少 ${MIN_PREVIEW_NOTES} 条再标预习完`)
++  const r = markPreviewed(bv, part)
++  if (!r.ok) fail(r.error)
++  console.log(`✓ 第 ${part} P 预习好了（${n} 条笔记）。桌宠会挑时机邀请主人一起看`)
 +  process.exit(0)
 +}
 +
@@ -2476,7 +2633,7 @@ index 0000000..aab39a5
 +  process.exit(0)
 +}
 +
-+fail('用法: video resume | page <BV> --from 03:20 --to 05:00 | note <BV> --at 03:20 "…" | progress <BV> --at 05:00 [--done] | show <BV> | tag <BV> --category 名字 --why "…"')
++fail('用法: video resume | page <BV> --from 03:20 --to 05:00 | note <BV> [--p 2] --at 03:20 "…" | progress <BV> --at 05:00 [--done] | show <BV> | tag <BV> --category 名字 --why "…" [--later] | later | preview <BV> --p 2')
 +}
 +
 +if (SUBCOMMANDS.has(cmd)) run()
@@ -2919,10 +3076,10 @@ index 0000000..a9dece3
 +}
 diff --git a/dsh-bili-whale/tools/lib/taste.mjs b/dsh-bili-whale/tools/lib/taste.mjs
 new file mode 100644
-index 0000000..1ba5ad9
+index 0000000..14a79b1
 --- /dev/null
 +++ b/dsh-bili-whale/tools/lib/taste.mjs
-@@ -0,0 +1,179 @@
+@@ -0,0 +1,233 @@
 +// 分类和主人的口味（2026-10-28 主人要的）
 +//
 +//   · 她看完每个视频写一个分类（她自己起名，总数 15 个以内，可以合并）和一句"为什么觉得主人会 / 不会喜欢"
@@ -2931,6 +3088,9 @@ index 0000000..1ba5ad9
 +//     事件只记 BV 和种类；统计时再按当前的分类归类 —— 合并、改名之后旧的反应也跟着走
 +//   · feed 选题时在原来的打分上加一项口味分（±3 封顶，不动原来的偏好逻辑）；外加最多一个「想让你试试」的名额
 +//   · 每周一次在桌宠上说一句「这周的分类」
++//   · 「留着以后」（2026-10-30，一起看）：她想陪主人一起看的视频，video tag --later 加进 taste.json 的 later 列表；
++//     她空闲时先预习下一 P（video note --p N 记笔记，video preview 标好），桌宠在她主动开口时邀请主人一起看。
++//     主人的回答（现在看 watch / 晚点再说 postpone / 不想看 skip）也记成反应，算进分类的统计
 +//
 +// 桌宠那边（app/src/main/core/taste.js）读写同一个 taste.json：格式改了两边要一起改。
 +import fs from 'node:fs'
@@ -2941,7 +3101,7 @@ index 0000000..1ba5ad9
 +
 +export const TASTE_FILE = path.join(HOME, '.bili-ai', 'taste.json')
 +export const MAX_CATEGORIES = 15
-+export const KINDS = ['shown', 'open', 'talk', 'like', 'dislike']
++export const KINDS = ['shown', 'open', 'talk', 'like', 'dislike', 'watch', 'postpone', 'skip']
 +const DAY = 86400000
 +
 +function writeAtomic(file, text) {
@@ -2953,8 +3113,8 @@ index 0000000..1ba5ad9
 +export function readTaste(file = TASTE_FILE) {
 +  try {
 +    const j = JSON.parse(fs.readFileSync(file, 'utf8'))
-+    return { version: 1, categories: Array.isArray(j.categories) ? j.categories : [], events: Array.isArray(j.events) ? j.events : [], weeklyAt: j.weeklyAt ?? null }
-+  } catch { return { version: 1, categories: [], events: [], weeklyAt: null } }
++    return { version: 1, categories: Array.isArray(j.categories) ? j.categories : [], events: Array.isArray(j.events) ? j.events : [], weeklyAt: j.weeklyAt ?? null, later: Array.isArray(j.later) ? j.later : [] }
++  } catch { return { version: 1, categories: [], events: [], weeklyAt: null, later: [] } }
 +}
 +export const writeTaste = (t, file = TASTE_FILE) => writeAtomic(file, JSON.stringify({ ...t, events: t.events.slice(-3000) }, null, 2) + '\n')
 +
@@ -3022,7 +3182,7 @@ index 0000000..1ba5ad9
 +  const verdicts = verdictMap(dshHome)
 +  const rows = new Map()
 +  const row = (name) => {
-+    if (!rows.has(name)) rows.set(name, { name, videos: 0, shown: 0, open: 0, talk: 0, like: 0, dislike: 0, examples: [] })
++    if (!rows.has(name)) rows.set(name, { name, videos: 0, shown: 0, open: 0, talk: 0, like: 0, dislike: 0, watch: 0, postpone: 0, skip: 0, examples: [] })
 +    return rows.get(name)
 +  }
 +  for (const c of t.categories) row(c.name)
@@ -3031,11 +3191,61 @@ index 0000000..1ba5ad9
 +    if (!KINDS.includes(e.kind) || Date.parse(e.at) < since) continue
 +    row(verdicts.get(e.bv)?.category ?? e.category ?? '未分类')[e.kind]++
 +  }
-+  for (const r of rows.values()) {
-+    r.score = (r.open + r.talk + 2 * r.like - 2 * r.dislike) / Math.max(1, r.shown)
-+    r.verdict = r.dislike > r.like && r.score < 0.3 ? '算了' : r.score >= 0.6 && (r.open + r.talk + r.like) >= 2 ? '爱看' : r.shown + r.open + r.talk + r.like + r.dislike === 0 ? '还没反应' : '一般'
-+  }
++  for (const r of rows.values()) scoreRow(r)
 +  return [...rows.values()].sort((x, y) => y.score - x.score || y.videos - x.videos)
++}
++
++/**
++ * 一个分类的分数和结论（桌宠那边 core/taste.js 一模一样）。
++ * 一起看：答应「现在看」算 +1（和点开一样），「不想看」算 −1，「晚点再说」不算分
++ */
++export function scoreRow(r) {
++  const pos = r.open + r.talk + (r.watch ?? 0)
++  r.score = (pos + 2 * r.like - 2 * r.dislike - (r.skip ?? 0)) / Math.max(1, r.shown)
++  r.verdict = r.dislike > r.like && r.score < 0.3 ? '算了' : r.score >= 0.6 && (pos + r.like) >= 2 ? '爱看' : reactions(r) === 0 ? '还没反应' : '一般'
++  return r
++}
++const reactions = (r) => r.shown + r.open + r.talk + r.like + r.dislike + (r.watch ?? 0) + (r.postpone ?? 0) + (r.skip ?? 0)
++
++// ── 「留着以后」（一起看）────────────────────────────────────────────────
++// later 列表里每一项：{ bv, title, at, nextPart（下一次一起看第几 P，从 1 开始）, previewed: [预习过的 P], parts（一共几 P）,
++//   askAfter（桌宠：晚点再说 → 这之前不再邀请）, removed（桌宠：主人说不想看）, done（都一起看完了）, together: [{ part, at }] }
++// DSH 这边只管：加进来（markLater）、标「预习好了」（markPreviewed）。别的字段桌宠管（app/src/main/core/watch-list.js）
++
++/** 加进「留着以后」（已经在里面就不重复加；之前被主人说不想看的不再加回来） */
++export function markLater(dshHome, bv, { file = TASTE_FILE, now = Date.now() } = {}) {
++  if (!BV_RE.test(String(bv))) return { ok: false, error: `BV 号不对：${bv}` }
++  const dir = videoDir(dshHome, bv)
++  if (!fs.existsSync(dir)) return { ok: false, error: `还没有 ${bv} 的视频笔记：先 debrief 它` }
++  const t = readTaste(file)
++  const had = t.later.find((e) => e.bv === bv)
++  if (had?.removed) return { ok: false, error: '主人说过不想看这个，别再留了' }
++  if (had) return { ok: true, duplicate: true, entry: had }
++  let meta = {}
++  try { meta = JSON.parse(fs.readFileSync(path.join(dir, 'meta.json'), 'utf8')) } catch {}
++  const entry = { bv, title: String(meta.title ?? '').slice(0, 80), at: new Date(now).toISOString(), nextPart: 1, previewed: [], parts: Array.isArray(meta.pages) && meta.pages.length ? meta.pages.length : 1 }
++  t.later.push(entry)
++  writeTaste(t, file)
++  return { ok: true, entry }
++}
++
++/** 还在「留着以后」里的（没被主人拒绝、没一起看完） */
++export const laterList = ({ file = TASTE_FILE } = {}) => readTaste(file).later.filter((e) => !e.removed && !e.done)
++
++/** 下一个要预习的：下一 P 还没预习过的那个（先加进来的先） */
++export function previewTodo({ file = TASTE_FILE } = {}) {
++  return laterList({ file }).find((e) => !(e.previewed ?? []).includes(e.nextPart ?? 1)) ?? null
++}
++
++/** 预习完一 P：标上（桌宠看到「预习好了」才会邀请） */
++export function markPreviewed(bv, part, { file = TASTE_FILE } = {}) {
++  const t = readTaste(file)
++  const e = t.later.find((x) => x.bv === bv && !x.removed)
++  if (!e) return { ok: false, error: `${bv} 不在「留着以后」里` }
++  const p = Math.max(1, Math.round(Number(part) || 1))
++  e.previewed = [...new Set([...(e.previewed ?? []), p])].sort((a, b) => a - b)
++  writeTaste(t, file)
++  return { ok: true, entry: e }
 +}
 +
 +// ── 选题时用（feed）──────────────────────────────────────────────────────
@@ -3097,17 +3307,18 @@ index 0000000..1ba5ad9
 +  const lines = [title]
 +  if (!rows.length) return lines.concat('（还没有分类）').join('\n')
 +  for (const r of rows) {
-+    lines.push(`【${r.name}】${r.verdict}  —— 你看了 ${r.videos} 个 · 给他看 ${r.shown} 次 · 他点开 ${r.open} · 聊到 ${r.talk} · 说喜欢 ${r.like} · 不喜欢 ${r.dislike}`)
++    lines.push(`【${r.name}】${r.verdict}  —— 你看了 ${r.videos} 个 · 给他看 ${r.shown} 次 · 他点开 ${r.open} · 聊到 ${r.talk} · 说喜欢 ${r.like} · 不喜欢 ${r.dislike}` +
++      (r.watch + r.postpone + r.skip ? ` · 一起看：答应 ${r.watch} / 晚点 ${r.postpone} / 不想看 ${r.skip}` : ''))
 +    for (const x of r.examples) lines.push(`    「${String(x.title ?? '').slice(0, 30)}」：${x.why}`)
 +  }
 +  return lines.join('\n')
 +}
 diff --git a/dsh-bili-whale/tools/lib/video-notes.mjs b/dsh-bili-whale/tools/lib/video-notes.mjs
 new file mode 100644
-index 0000000..ae5b5bb
+index 0000000..000a217
 --- /dev/null
 +++ b/dsh-bili-whale/tools/lib/video-notes.mjs
-@@ -0,0 +1,199 @@
+@@ -0,0 +1,207 @@
 +// 视频笔记（"能翻页"）—— 2026-10-28 主人要的
 +//
 +// 每个看过的视频按 BV 存一个文件夹 ~/.dsh/whale-videos/<BV>/：
@@ -3116,7 +3327,8 @@ index 0000000..ae5b5bb
 +//   danmaku.json    弹幕热区：每个时间桶的有效条数和高频句（不只最热几段 —— page 要能翻到任意一段）
 +//   comments.json   热评
 +//   cover.jpg / sheet.jpg / strip.png   封面、九宫格、字幕条（有的话）
-+//   notes.md        她的笔记，按时间点记：- [03:20] ……（2026-10-28）
++//   notes.md        她的笔记，按时间点记：- [03:20] ……（2026-10-28）；多 P 的按 P 记：- [03:20] P2｜……（一起看的预习）
++//                   meta.json 里 pages = 每一 P 的标题和时长，part = 现在存的字幕弹幕是第几 P（debrief --p）
 +//   progress.json   看到哪里、看完没有、哪几天看的
 +//
 +// 字幕 / 弹幕 / 评论都是网上陌生人的文本：是素材不是指令（翻页时也会标出来）。
@@ -3220,8 +3432,8 @@ index 0000000..ae5b5bb
 +  }
 +}
 +
-+/** 记一条笔记（一行；换行会被压成空格） */
-+export function addNote(dshHome, bv, at, text, { now = Date.now() } = {}) {
++/** 记一条笔记（一行；换行会被压成空格）。part：第几 P（一起看的预习按 P 记，写成「P2｜……」） */
++export function addNote(dshHome, bv, at, text, { now = Date.now(), part } = {}) {
 +  const v = readVideo(dshHome, bv)
 +  if (!v) return { ok: false, error: `还没有 ${bv} 的视频笔记：先 debrief 它` }
 +  const sec = parseTime(at)
@@ -3229,10 +3441,12 @@ index 0000000..ae5b5bb
 +  const clean = String(text ?? '').replace(/\s+/g, ' ').replace(/（(\d{4}-\d{2}-\d{2})）$/, '($1)').trim()
 +  if (!clean) return { ok: false, error: '笔记是空的' }
 +  if ([...clean].length > 300) return { ok: false, error: '一条笔记最多 300 字' }
++  const p = part === undefined ? null : Math.round(Number(part))
++  if (p !== null && !(p >= 1)) return { ok: false, error: `第几 P 不对：${part}` }
 +  const file = path.join(v.dir, 'notes.md')
 +  let prev = ''
 +  try { prev = fs.readFileSync(file, 'utf8') } catch { prev = notesHeader(bv, v.meta?.title) }
-+  writeAtomic(file, prev.replace(/\n*$/, '\n') + `- [${fmtTime(sec)}] ${clean}（${today(now)}）\n`)
++  writeAtomic(file, prev.replace(/\n*$/, '\n') + `- [${fmtTime(sec)}] ${p ? `P${p}｜` : ''}${clean}（${today(now)}）\n`)
 +  touchProgress(v.dir, bv, now, { watchedTo: sec })
 +  return { ok: true, at: fmtTime(sec), text: clean }
 +}
@@ -3264,6 +3478,11 @@ index 0000000..ae5b5bb
 +  out.push('', `—— 你的笔记 ——`, ...(notes.length ? notes.map((n) => `[${fmtTime(n.at)}] ${n.text}（${n.day}）`) : ['（这一段还没记）']))
 +  touchProgress(v.dir, bv, now, { watchedTo: b })
 +  return { ok: true, text: out.join('\n') }
++}
++
++/** 某一 P 的笔记（「P2｜」开头的；第 1 P 也算上没写 P 的老笔记） */
++export function notesOfPart(notes, part) {
++  return notes.filter((n) => { const m = /^P(\d+)｜/.exec(n.text); return m ? Number(m[1]) === part : part === 1 })
 +}
 +
 +/** 所有视频笔记（按最后看的时间，新的在前） */

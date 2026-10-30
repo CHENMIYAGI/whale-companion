@@ -7,15 +7,22 @@
 //   node bili.mjs video progress <BV> --at 05:00         记一下看到哪了（--done = 看完了）
 //   node bili.mjs video show <BV>                       这个视频的摘要（进度、弹幕最热处、最近的笔记）
 //   node bili.mjs video tag <BV> --category 名字 --why "……"   看完给它分类（自己起名，总共 15 个以内）+ 一句为什么觉得主人会 / 不会喜欢
+//        加 --later：「留着以后」—— 想陪主人一起看，先留着（桌宠会在你主动找他时邀请他）
+//
+// 一起看（2026-10-30；装了桌宠才有用）：
+//   node bili.mjs video later                           「留着以后」的清单：下一次一起看第几 P、预习了没有
+//   node bili.mjs video note <BV> --p 2 --at 03:20 "……"  预习时按 P 记笔记（这一段讲什么｜好看在哪｜弹幕在吵什么）
+//   node bili.mjs video preview <BV> --p 2               这一 P 预习完了（至少记 3 条这一 P 的笔记）
 //
 // 翻页翻到哪就算看到哪。笔记保留 90 天（从最后一次看算），收藏过的永久保留。
 //
 // 原来的 `video <BV>`（不点开视频也能还原它讲什么，video-content.mjs）照旧：第一个参数不是上面这几个子命令，就原样交给它。
 import { DSH_HOME } from '../lib/paths.mjs'
-import { pageText, addNote, setProgress, unfinished, readVideo, summaryText, fmtTime, BV_RE } from '../lib/video-notes.mjs'
-import { tagVideo } from '../lib/taste.mjs'
+import { pageText, addNote, setProgress, unfinished, readVideo, summaryText, fmtTime, notesOfPart, BV_RE } from '../lib/video-notes.mjs'
+import { tagVideo, markLater, markPreviewed, laterList } from '../lib/taste.mjs'
 
-const SUBCOMMANDS = new Set(['resume', 'page', 'note', 'progress', 'show', 'tag'])
+const SUBCOMMANDS = new Set(['resume', 'page', 'note', 'progress', 'show', 'tag', 'later', 'preview'])
+const MIN_PREVIEW_NOTES = 3
 const argv = process.argv.slice(2)
 const cmd = argv[0]
 const opt = {}
@@ -52,7 +59,7 @@ if (cmd === 'page') {
 if (cmd === 'note') {
   needBv()
   if (typeof opt.at !== 'string') fail('要写时间点：--at 03:20')
-  const r = addNote(DSH_HOME, bv, opt.at, pos.slice(1).join(' '))
+  const r = addNote(DSH_HOME, bv, opt.at, pos.slice(1).join(' '), opt.p !== undefined ? { part: opt.p } : {})
   if (!r.ok) fail(r.error)
   console.log(`✓ 记下了 [${r.at}] ${r.text}`)
   process.exit(0)
@@ -72,6 +79,34 @@ if (cmd === 'tag') {
   const r = tagVideo(DSH_HOME, bv, { category: opt.category, why: opt.why })
   if (!r.ok) fail(r.error)
   console.log(`✓ ${bv} 归到「${r.category}」${r.added ? '（新分类）' : ''}`)
+  if (opt.later) {
+    const l = markLater(DSH_HOME, bv)
+    console.log(l.ok ? `✓ 「留着以后」${l.duplicate ? '（本来就在）' : ''}：空闲时先预习第 ${l.entry.nextPart} P（video note ${bv} --p ${l.entry.nextPart} …）` : `（没加进「留着以后」：${l.error}）`)
+  }
+  process.exit(0)
+}
+
+if (cmd === 'later') {
+  const list = laterList()
+  if (!list.length) { console.log('「留着以后」是空的。看到想陪主人一起看的，video tag <BV> … --later 留着。'); process.exit(0) }
+  console.log(`「留着以后」${list.length} 个：`)
+  for (const e of list) {
+    const ready = (e.previewed ?? []).includes(e.nextPart ?? 1)
+    console.log(`  ${e.bv}  ${e.title ?? ''}  下次一起看第 ${e.nextPart ?? 1} P / 共 ${e.parts ?? 1} P  ${ready ? '已预习' : '还没预习'}${e.askAfter && Date.parse(e.askAfter) > Date.now() ? '（主人说晚点再说）' : ''}`)
+  }
+  process.exit(0)
+}
+
+if (cmd === 'preview') {
+  needBv()
+  const part = Math.max(1, Math.round(Number(opt.p) || 1))
+  const v = readVideo(DSH_HOME, bv)
+  if (!v) fail(`还没有 ${bv} 的视频笔记（debrief 过才有）`)
+  const n = notesOfPart(v.notes, part).length
+  if (n < MIN_PREVIEW_NOTES) fail(`第 ${part} P 只记了 ${n} 条笔记：每段记一条（时间点、讲什么、好看在哪、弹幕反应），至少 ${MIN_PREVIEW_NOTES} 条再标预习完`)
+  const r = markPreviewed(bv, part)
+  if (!r.ok) fail(r.error)
+  console.log(`✓ 第 ${part} P 预习好了（${n} 条笔记）。桌宠会挑时机邀请主人一起看`)
   process.exit(0)
 }
 
@@ -83,7 +118,7 @@ if (cmd === 'show') {
   process.exit(0)
 }
 
-fail('用法: video resume | page <BV> --from 03:20 --to 05:00 | note <BV> --at 03:20 "…" | progress <BV> --at 05:00 [--done] | show <BV> | tag <BV> --category 名字 --why "…"')
+fail('用法: video resume | page <BV> --from 03:20 --to 05:00 | note <BV> [--p 2] --at 03:20 "…" | progress <BV> --at 05:00 [--done] | show <BV> | tag <BV> --category 名字 --why "…" [--later] | later | preview <BV> --p 2')
 }
 
 if (SUBCOMMANDS.has(cmd)) run()

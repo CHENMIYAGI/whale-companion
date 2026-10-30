@@ -2,7 +2,7 @@ import { guardedFetch as fetch } from '../lib/traffic.mjs'
 import { apiGet } from '../lib/bili-api.mjs'
 // 「看懂视频」一条龙：封面 + 简介 + 官方字幕 + 弹幕热区 + 热评 + 画面抽帧，六路齐出。
 //
-// 用法: node debrief.mjs <BV> [--bucket 30] [--top 5] [--grid 3x3] [--no-frames] [--substrip 每N秒] [--comments 8]
+// 用法: node debrief.mjs <BV> [--p 第几P] [--bucket 30] [--top 5] [--grid 3x3] [--no-frames] [--substrip 每N秒] [--comments 8]
 // 产出: 终端摘要 + 封面图 + 字幕 TXT + 弹幕对齐表 + 九宫格/字幕带（后三者交给 read_image / 模型合成）
 //
 // 设计（2026-10-14，主人定义为「看懂视频」大模块）：
@@ -81,9 +81,14 @@ fs.mkdirSync(path.join(shots, 'subs'), { recursive: true })
 // ── ① 元信息 ──
 const view = await jget(`https://api.bilibili.com/x/web-interface/view?bvid=${bvid}`)
 if (view.code !== 0) { console.error(`view 失败 code=${view.code} ${view.message}`); process.exit(3) }
-const d = view.data, cid = d.cid, aid = d.aid, dur = d.duration
+const d = view.data, aid = d.aid
+// 多 P（2026-10-30，一起看的预习）：--p N 看第 N P —— 字幕、弹幕、时长都换成这一 P 的（不写就是第 1 P，和以前一样）
+const pages = Array.isArray(d.pages) ? d.pages : []
+const partNo = Math.min(Math.max(1, Math.round(Number(opt.p) || 1)), Math.max(1, pages.length))
+const cid = pages[partNo - 1]?.cid ?? d.cid, dur = pages[partNo - 1]?.duration ?? d.duration
 console.log('══════════ ① 元信息（它自称是什么）══════════')
 console.log(`标题: ${d.title}`)
+if (pages.length > 1) console.log(`分P: 第 ${partNo} P / 共 ${pages.length} P「${pages[partNo - 1]?.part ?? ''}」（画面抽帧仍是第 1 P 的）`)
 console.log(`UP: ${d.owner.name}   时长: ${fmt(dur)}   分区: ${d.tname || '-'}   发布: ${new Date(d.pubdate * 1000).toLocaleDateString('zh-CN')}`)
 console.log(`播放 ${d.stat.view}  点赞 ${d.stat.like}  收藏 ${d.stat.favorite}  投币 ${d.stat.coin}  弹幕 ${d.stat.danmaku}  评论 ${d.stat.reply}`)
 if (d.desc) console.log(`简介: ${d.desc.replace(/\n+/g, ' / ').slice(0, 300)}`)
@@ -283,7 +288,8 @@ try {
   const { saveDebrief, favoriteBvs } = await import('../lib/video-notes.mjs')
   const home = process.env.USERPROFILE || process.env.HOME || '/'
   const saved = saveDebrief(dshPath(), bvid, {
-    meta: { title: d.title, up: d.owner?.name, duration: dur, tname: d.tname, pubdate: d.pubdate, desc: String(d.desc ?? '').slice(0, 1000), stat: d.stat },
+    meta: { title: d.title, up: d.owner?.name, duration: dur, tname: d.tname, pubdate: d.pubdate, desc: String(d.desc ?? '').slice(0, 1000), stat: d.stat,
+      part: partNo, pages: pages.map((p) => ({ page: p.page, part: String(p.part ?? '').slice(0, 80), duration: p.duration })) },   // part：现在存的字幕弹幕是第几 P
     subs: body.map((l) => ({ from: l.from, to: l.to ?? l.from + 3, text: l.content })),
     danmaku: danmakuSave, comments: commentsSave, cover: coverFile, sheet: sheetSave, strip: stripSave,
   }, { favorites: favoriteBvs(home) })

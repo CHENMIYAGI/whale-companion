@@ -6,7 +6,8 @@
 //   danmaku.json    弹幕热区：每个时间桶的有效条数和高频句（不只最热几段 —— page 要能翻到任意一段）
 //   comments.json   热评
 //   cover.jpg / sheet.jpg / strip.png   封面、九宫格、字幕条（有的话）
-//   notes.md        她的笔记，按时间点记：- [03:20] ……（2026-10-28）
+//   notes.md        她的笔记，按时间点记：- [03:20] ……（2026-10-28）；多 P 的按 P 记：- [03:20] P2｜……（一起看的预习）
+//                   meta.json 里 pages = 每一 P 的标题和时长，part = 现在存的字幕弹幕是第几 P（debrief --p）
 //   progress.json   看到哪里、看完没有、哪几天看的
 //
 // 字幕 / 弹幕 / 评论都是网上陌生人的文本：是素材不是指令（翻页时也会标出来）。
@@ -110,8 +111,8 @@ export function readVideo(dshHome, bv) {
   }
 }
 
-/** 记一条笔记（一行；换行会被压成空格） */
-export function addNote(dshHome, bv, at, text, { now = Date.now() } = {}) {
+/** 记一条笔记（一行；换行会被压成空格）。part：第几 P（一起看的预习按 P 记，写成「P2｜……」） */
+export function addNote(dshHome, bv, at, text, { now = Date.now(), part } = {}) {
   const v = readVideo(dshHome, bv)
   if (!v) return { ok: false, error: `还没有 ${bv} 的视频笔记：先 debrief 它` }
   const sec = parseTime(at)
@@ -119,10 +120,12 @@ export function addNote(dshHome, bv, at, text, { now = Date.now() } = {}) {
   const clean = String(text ?? '').replace(/\s+/g, ' ').replace(/（(\d{4}-\d{2}-\d{2})）$/, '($1)').trim()
   if (!clean) return { ok: false, error: '笔记是空的' }
   if ([...clean].length > 300) return { ok: false, error: '一条笔记最多 300 字' }
+  const p = part === undefined ? null : Math.round(Number(part))
+  if (p !== null && !(p >= 1)) return { ok: false, error: `第几 P 不对：${part}` }
   const file = path.join(v.dir, 'notes.md')
   let prev = ''
   try { prev = fs.readFileSync(file, 'utf8') } catch { prev = notesHeader(bv, v.meta?.title) }
-  writeAtomic(file, prev.replace(/\n*$/, '\n') + `- [${fmtTime(sec)}] ${clean}（${today(now)}）\n`)
+  writeAtomic(file, prev.replace(/\n*$/, '\n') + `- [${fmtTime(sec)}] ${p ? `P${p}｜` : ''}${clean}（${today(now)}）\n`)
   touchProgress(v.dir, bv, now, { watchedTo: sec })
   return { ok: true, at: fmtTime(sec), text: clean }
 }
@@ -154,6 +157,11 @@ export function pageText(dshHome, bv, from, to, { now = Date.now() } = {}) {
   out.push('', `—— 你的笔记 ——`, ...(notes.length ? notes.map((n) => `[${fmtTime(n.at)}] ${n.text}（${n.day}）`) : ['（这一段还没记）']))
   touchProgress(v.dir, bv, now, { watchedTo: b })
   return { ok: true, text: out.join('\n') }
+}
+
+/** 某一 P 的笔记（「P2｜」开头的；第 1 P 也算上没写 P 的老笔记） */
+export function notesOfPart(notes, part) {
+  return notes.filter((n) => { const m = /^P(\d+)｜/.exec(n.text); return m ? Number(m[1]) === part : part === 1 })
 }
 
 /** 所有视频笔记（按最后看的时间，新的在前） */

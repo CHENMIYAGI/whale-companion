@@ -323,6 +323,8 @@ async function openSettings() {
   dailyBox.value = p.dailyMax ?? 4
   quietStartBox.value = p.quietStart ?? 23
   quietEndBox.value = p.quietEnd ?? 8
+  watchInviteBox.checked = s.watch?.invite !== false
+  watchOverFsBox.checked = s.watch?.overFullscreen !== false
   entranceBox.checked = s.greet?.entrance !== false
   exitBox.checked = s.greet?.exit !== false
   busyManual.checked = s.busy?.manual !== false
@@ -417,6 +419,7 @@ document.addEventListener('keydown', (e) => {
   if (e.key !== 'Escape') return
   if (!settings.hidden) closeSettings()
   else if (!stickerPanel.hidden) closeStickers()
+  else if (!watchListEl.hidden) closeWatchList()
   else window.chat.hide()
 })
 
@@ -522,6 +525,97 @@ document.addEventListener('drop', (e) => {
   if (!f) return note('只能拖电脑里的图片文件进来（网上的图先存到电脑里）', true)
   sendFile(f)
 })
+
+// ── 一起看 ──────────────────────────────────────────────────────────────
+// 邀请卡片（现在看 / 晚点再说 / 不想看）、一起看时顶上那一条（看到哪、暂停 / 结束）、「一起看的清单」
+const watchBar = document.getElementById('watchBar')
+const watchInfo = document.getElementById('watchInfo')
+const btnWatchToggle = document.getElementById('btnWatchToggle')
+const watchListEl = document.getElementById('watchList')
+const watchItems = document.getElementById('watchItems')
+const CHOICE_LABELS = { watch: '现在看', postpone: '晚点再说', skip: '不想看' }
+const mmss = (s) => `${String(Math.floor((s ?? 0) / 60)).padStart(2, '0')}:${String(Math.floor(s ?? 0) % 60).padStart(2, '0')}`
+let watching = null   // 主进程发来的一起看状态（没在看就是 null）
+
+function applyWatch(st) {
+  watching = st?.active ? st : null
+  watchBar.hidden = !watching
+  if (!watching) return
+  const label = `「${st.title}」${st.parts > 1 ? ` P${st.part}` : ''}`
+  watchInfo.textContent = st.preparing ? `🎬 一起看${label}：她在准备…` : `🎬 一起看${label} · ${mmss(st.elapsed)} / ${mmss(st.duration)}${st.paused ? '（暂停）' : ''}`
+  btnWatchToggle.hidden = !!st.preparing
+  btnWatchToggle.textContent = st.paused ? '继续' : '暂停'
+}
+btnWatchToggle.addEventListener('click', () => window.chat.watchControl(watching?.paused ? 'resume' : 'pause'))
+document.getElementById('btnWatchEnd').addEventListener('click', () => window.chat.watchControl('end'))
+
+// 邀请卡片：和确认卡片一个样子，三个按钮
+function showInvite(inv) {
+  const box = el('div', 'card invite')
+  box.append(el('div', 'title', inv.text ?? '一起看吗？'))
+  const row = el('div', 'row')
+  for (const [i, a] of (inv.actions ?? []).entries()) {
+    const b = el('button', i === 0 ? 'primary' : '', a.label)
+    b.type = 'button'
+    b.addEventListener('click', async () => {
+      const r = await window.chat.answerInvite(inv.id, a.id)
+      closeCard(inv.id, r?.ok ? '你选了：' + a.label : (r?.error ?? '没成功'))
+    })
+    row.append(b)
+  }
+  box.append(row)
+  cards.set(inv.id, box)
+  append(box, true)
+}
+
+// 「一起看的清单」
+async function openWatchList() {
+  const { items, active } = await window.chat.watchList()
+  watchItems.replaceChildren()
+  if (!items.length) watchItems.append(el('li', 'empty', '还是空的：她在 DSH 里看到想陪你一起看的视频，会先留着（「留着以后」）。'))
+  for (const it of items) {
+    const li = el('li')
+    li.append(el('div', 't', it.title))
+    const bits = [`下次一起看第 ${it.nextPart} P / 共 ${it.parts} P`, it.previewed ? '已预习' : '还没预习']
+    if (it.watchedParts.length) bits.push('一起看过：' + it.watchedParts.map((p) => 'P' + p).join('、'))
+    if (it.postponedUntil) bits.push(`晚点再说（${new Date(it.postponedUntil).toLocaleDateString()} 以后再问）`)
+    li.append(el('div', 's', bits.join(' · ')))
+    const b = el('button', 'primary', '现在一起看')
+    b.type = 'button'
+    b.disabled = !!active
+    if (active) b.title = '正在一起看别的'
+    b.addEventListener('click', async () => {
+      b.disabled = true
+      const r = await window.chat.watchStart(it.bv)
+      if (r?.ok) closeWatchList()
+      else { b.disabled = false; note(r?.error ?? '开始不了', true) }
+    })
+    li.append(b)
+    watchItems.append(li)
+  }
+  watchListEl.hidden = false
+}
+function closeWatchList() {
+  watchListEl.hidden = true
+}
+document.getElementById('btnWatchListClose').addEventListener('click', closeWatchList)
+
+window.chat.onEvent((ev) => {
+  if (ev.type === 'invite') showInvite(ev.invite)
+  else if (ev.type === 'invite-closed') closeCard(ev.id, '你选了：' + (CHOICE_LABELS[ev.choice] ?? ''))
+  else if (ev.type === 'watch') applyWatch(ev.state)
+  else if (ev.type === 'open-watch-list') openWatchList()
+})
+
+// 设置里一起看的两个开关：一勾就存
+const watchInviteBox = document.getElementById('setWatchInvite')
+const watchOverFsBox = document.getElementById('setWatchOverFs')
+for (const box of [watchInviteBox, watchOverFsBox]) {
+  box.addEventListener('change', async () => {
+    const r = await window.chat.setWatchSettings({ invite: watchInviteBox.checked, overFullscreen: watchOverFsBox.checked })
+    settingsMessage(r?.ok ? '已经改好了' : '没改成', r?.ok ? 'ok' : 'error')
+  })
+}
 
 // ── 打开时：拿名字、历史、状态 ───────────────────────────────────────────
 async function start() {

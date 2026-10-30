@@ -29,6 +29,14 @@ contextBridge.exposeInMainWorld('pet', {
   onBubble: (fn) =>
     ipcRenderer.on('pet:bubble', (event, data) => fn(data)),
 
+  // 气泡上的按钮（一起看的邀请）：只传邀请的 id 和选了哪个
+  bubbleAction: (id, choice) =>
+    ipcRenderer.send('pet:bubble-action', { id: String(id ?? ''), choice: String(choice ?? '') }),
+
+  // 主人在对话框里回答了邀请：收起气泡
+  onBubbleClose: (fn) =>
+    ipcRenderer.on('pet:bubble-close', (event, data) => fn(data)),
+
   // 入场：淡入、挥手、说一句（data.text，可能是空的）
   onHello: (fn) =>
     ipcRenderer.on('pet:hello', (event, data) => fn(data)),
@@ -100,6 +108,13 @@ contextBridge.exposeInMainWorld('chat', {
   favorite: (id) => ipcRenderer.invoke('sticker:favorite', { id: String(id) }),
 
   openStickerFolder: () => ipcRenderer.invoke('sticker:open-folder'),
+
+  // 一起看：回答邀请（watch / postpone / skip）、暂停 / 继续 / 结束、清单、从清单里开始
+  answerInvite: (id, choice) => ipcRenderer.invoke('watch:answer', { id: String(id), choice: String(choice) }),
+  watchControl: (action) => ipcRenderer.invoke('watch:control', { action: String(action) }),
+  watchList: () => ipcRenderer.invoke('watch:list'),
+  watchStart: (bv) => ipcRenderer.invoke('watch:start', { bv: String(bv) }),
+  setWatchSettings: (s) => ipcRenderer.invoke('settings:watch', { invite: s?.invite === true, overFullscreen: s?.overFullscreen === true }),
 
   // 设置
   getSettings: () => ipcRenderer.invoke('settings:get'),

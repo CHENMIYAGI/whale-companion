@@ -2,22 +2,24 @@
 //
 // 格式和算法跟 dsh-bili-whale/tools/lib/taste.mjs 一样（那边管分类表、给视频分类、选题加权）：改了两边要一起改，
 // test/taste.test.mjs 会拿同一份数据让两边各算一遍对比。
-//   events：{ at, bv, kind, category? } —— kind：shown 分享了 / open 点了打开视频 / talk 聊天里聊到 / like / dislike
+//   events：{ at, bv, kind, category? } —— kind：shown 分享了 / open 点了打开视频 / talk 聊天里聊到 / like / dislike /
+//           一起看的邀请：watch 现在看 / postpone 晚点再说 / skip 不想看（2026-10-30）
+//   later：「留着以后」清单（一起看，见 core/watch-list.js）—— 读写时一定要原样带着，不然另一边写的就丢了
 //   统计时按视频笔记里当前的分类（verdict.json）归类：合并、改名后旧反应跟着走
 import fs from 'node:fs'
 import path from 'node:path'
 import crypto from 'node:crypto'
 
-export const KINDS = ['shown', 'open', 'talk', 'like', 'dislike']
+export const KINDS = ['shown', 'open', 'talk', 'like', 'dislike', 'watch', 'postpone', 'skip']
 const BV_RE = /^BV[0-9A-Za-z]{10}$/
 
 export function readTaste(file) {
   try {
     const j = JSON.parse(fs.readFileSync(file, 'utf8'))
-    return { version: 1, categories: Array.isArray(j.categories) ? j.categories : [], events: Array.isArray(j.events) ? j.events : [], weeklyAt: j.weeklyAt ?? null }
-  } catch { return { version: 1, categories: [], events: [], weeklyAt: null } }
+    return { version: 1, categories: Array.isArray(j.categories) ? j.categories : [], events: Array.isArray(j.events) ? j.events : [], weeklyAt: j.weeklyAt ?? null, later: Array.isArray(j.later) ? j.later : [] }
+  } catch { return { version: 1, categories: [], events: [], weeklyAt: null, later: [] } }
 }
-function writeTaste(t, file) {
+export function writeTaste(t, file) {
   fs.mkdirSync(path.dirname(file), { recursive: true })
   const tmp = `${file}.${process.pid}.${crypto.randomUUID()}.tmp`
   fs.writeFileSync(tmp, JSON.stringify({ ...t, events: t.events.slice(-3000) }, null, 2) + '\n')
@@ -60,17 +62,23 @@ export function tasteStats({ file, videosRoot }) {
   }
   const rows = new Map()
   const row = (name) => {
-    if (!rows.has(name)) rows.set(name, { name, videos: 0, shown: 0, open: 0, talk: 0, like: 0, dislike: 0, examples: [] })
+    if (!rows.has(name)) rows.set(name, { name, videos: 0, shown: 0, open: 0, talk: 0, like: 0, dislike: 0, watch: 0, postpone: 0, skip: 0, examples: [] })
     return rows.get(name)
   }
   for (const c of t.categories) row(c.name)
   for (const [, v] of verdicts) { const r = row(v.category); r.videos++; if (r.examples.length < 3) r.examples.push({ title: v.title, why: v.why }) }
   for (const e of t.events) if (KINDS.includes(e.kind)) row(verdicts.get(e.bv)?.category ?? e.category ?? '未分类')[e.kind]++
-  for (const r of rows.values()) {
-    r.score = (r.open + r.talk + 2 * r.like - 2 * r.dislike) / Math.max(1, r.shown)
-    r.verdict = r.dislike > r.like && r.score < 0.3 ? '算了' : r.score >= 0.6 && (r.open + r.talk + r.like) >= 2 ? '爱看' : r.shown + r.open + r.talk + r.like + r.dislike === 0 ? '还没反应' : '一般'
-  }
+  for (const r of rows.values()) scoreRow(r)
   return [...rows.values()].sort((x, y) => y.score - x.score || y.videos - x.videos)
+}
+
+/** 一个分类的分数和结论（和 DSH 那边 scoreRow 一模一样）：一起看「现在看」+1，「不想看」−1，「晚点再说」不算分 */
+export function scoreRow(r) {
+  const pos = r.open + r.talk + (r.watch ?? 0)
+  r.score = (pos + 2 * r.like - 2 * r.dislike - (r.skip ?? 0)) / Math.max(1, r.shown)
+  const any = r.shown + r.open + r.talk + r.like + r.dislike + (r.watch ?? 0) + (r.postpone ?? 0) + (r.skip ?? 0)
+  r.verdict = r.dislike > r.like && r.score < 0.3 ? '算了' : r.score >= 0.6 && (pos + r.like) >= 2 ? '爱看' : any === 0 ? '还没反应' : '一般'
+  return r
 }
 
 /** 右键「她的分类」打开的那份 */
@@ -79,7 +87,8 @@ export function reportText(rows) {
   if (!rows.length) return lines.concat('（她还没给视频分过类）').join('\n')
   for (const r of rows) {
     lines.push(`【${r.name}】${r.verdict}`)
-    lines.push(`  她看了 ${r.videos} 个 · 给你看了 ${r.shown} 次 · 你点开 ${r.open} 次 · 聊到 ${r.talk} 次 · 说喜欢 ${r.like} · 不喜欢 ${r.dislike}`)
+    lines.push(`  她看了 ${r.videos} 个 · 给你看了 ${r.shown} 次 · 你点开 ${r.open} 次 · 聊到 ${r.talk} 次 · 说喜欢 ${r.like} · 不喜欢 ${r.dislike}` +
+      (r.watch + r.postpone + r.skip ? ` · 一起看：答应 ${r.watch} / 晚点 ${r.postpone} / 不想看 ${r.skip}` : ''))
     for (const x of r.examples) lines.push(`  「${String(x.title ?? '').slice(0, 30)}」—— ${x.why}`)
     lines.push('')
   }

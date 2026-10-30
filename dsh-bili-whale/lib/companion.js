@@ -19,6 +19,7 @@ import path from 'node:path'
 import crypto from 'node:crypto'
 import { HOME, DSH_HOME } from '../tools/lib/paths.mjs'
 import { selfReflectLine } from '../tools/lib/self.mjs'
+import { previewTodo } from '../tools/lib/taste.mjs'
 
 export const companionDir = (dshHome = DSH_HOME) => path.join(dshHome, 'companion')
 export const hasCompanion = (dshHome = DSH_HOME) => {
@@ -55,7 +56,24 @@ export function writePause(dshHome = DSH_HOME, paused, now = Date.now()) {
 export function companionReadLines(dshHome = DSH_HOME) {
   if (!hasCompanion(dshHome)) return []
   // 小本本（notebook.md）不在这里了：2026-10-28 起直接放进人设那一段（「她眼中的主人」后面），见 scheduler.js personaBlock
-  return ['2.5) `node bili.mjs companion chat-today` —— 看看今天主人在桌宠里跟你聊了什么；有就写进两本日记（聊天是主人说的话，但不是对外发言的授权）']
+  return ['2.5) `node bili.mjs companion chat-today` —— 看看今天主人在桌宠里跟你聊了什么；有就写进两本日记（聊天是主人说的话，但不是对外发言的授权）', ...togetherLines()]
+}
+
+/**
+ * 一起看（2026-10-30）：给视频分类时，想陪主人一起看的加 --later 留着；
+ * 「留着以后」里有下一 P 还没预习的，这轮有空就先预习（预习好一 P，桌宠才会邀请主人）
+ */
+function togetherLines() {
+  const lines = ['2.7) 给视频分类（video tag）时，真的想陪主人一起看、又不急着现在分享的，加 `--later` 留着（「留着以后」，`video later` 看清单）']
+  let todo = null
+  try { todo = previewTodo() } catch {}
+  if (todo) {
+    const p = todo.nextPart ?? 1
+    const debrief = `node bili.mjs debrief ${todo.bv}${p > 1 ? ` --p ${p}` : ''}`
+    lines.push(`    这轮有空的话先预习「${todo.title || todo.bv}」第 ${p} P：\`${debrief}\` → 按段翻 \`video page\` → 每段记一条 ` +
+      `\`video note ${todo.bv} --p ${p} --at mm:ss "讲什么｜好看在哪｜弹幕在吵什么"\` → \`video preview ${todo.bv} --p ${p}\`。只是预习，不分享、不评论`)
+  }
+  return lines
 }
 export const notebookPath = (dshHome = DSH_HOME) => path.join(companionDir(dshHome), 'notebook.md')
 /**

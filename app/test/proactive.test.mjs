@@ -48,3 +48,14 @@ test('提示词：上次主动开口后主人回没回、多久没聊；怎么�
   assert.match(proactiveNote({ now: at(15), lastChatAt: 0, last: null }), /还没在桌宠里聊过天。这是你第一次主动找他/)
   assert.doesNotMatch(n, /不要生气|要开心|温柔|别难过|不要抱怨/)
 })
+
+test('一起看：有预习好的才告诉她可以邀请；邀请记号从她的话里拿掉、不显示', async () => {
+  const { takeInvite, INVITE } = await import('../src/main/core/proactive.js')
+  const n = proactiveNote({ now: at(15), lastChatAt: at(12), last: null, invite: { title: '鲸鱼纪录片', parts: 2, nextPart: 1 } })
+  assert.match(n, /［留着以后］你预习好了「鲸鱼纪录片」第 1 P/)
+  assert.ok(n.includes(INVITE))
+  assert.doesNotMatch(proactiveNote({ now: at(15), lastChatAt: at(12), last: null }), /留着以后/)
+  assert.deepEqual(takeInvite(['主人～', `要不要一起看呀\n${INVITE}`]), { parts: ['主人～', '要不要一起看呀'], invited: true })
+  assert.deepEqual(takeInvite([INVITE]), { parts: [], invited: true })
+  assert.deepEqual(takeInvite(['就聊聊']), { parts: ['就聊聊'], invited: false })
+})
