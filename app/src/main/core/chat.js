@@ -23,6 +23,15 @@ import { stickerText } from './stickers.js'
 import { createSplitter, splitParts, typingPause, SEP, SILENT } from './multi-message.js'
 
 // 等一会儿；主人点了「停止」就马上不等了
+// 她自己打出来的表情：照着旧格式「[表情：名字]（配字：…）」，或者照着旁白「（她发了一张表情：名字）」。
+// 拿掉这些字，返回 { text: 剩下的文字, names: [表情名字…] }
+const TYPED_STICKER = /\[表情[:：]\s*([^\]\n]{1,40}?)\s*\](?:（[^）\n]{0,300}）)?|（(?:她|你)发了一张表情[:：]\s*([^）。\n]{1,40}?)(?:。[^）\n]{0,300})?）/g
+export function takeTypedStickers(text) {
+  const names = []
+  const rest = String(text ?? '').replace(TYPED_STICKER, (_, a, b) => { names.push((a ?? b).trim()); return '' })
+  return { text: rest.replace(/[ \t]+$/gm, '').replace(/\n{3,}/g, '\n\n').trim(), names }
+}
+
 const sleep = (ms, signal) => new Promise((resolve, reject) => {
   const t = setTimeout(resolve, ms)
   signal?.addEventListener('abort', () => { clearTimeout(t); reject(Object.assign(new Error('已停止'), { name: 'AbortError' })) }, { once: true })
@@ -30,7 +39,7 @@ const sleep = (ms, signal) => new Promise((resolve, reject) => {
 
 const MAX_USER_CHARS = 4000
 
-export function createChat({ host, chatLog, bus, ui, getConfig, getApiKey, describeSticker = null, llm = { streamChat }, log = console.log, now = () => new Date(), wait = sleep }) {
+export function createChat({ host, chatLog, bus, ui, getConfig, getApiKey, describeSticker = null, findSticker = null, llm = { streamChat }, log = console.log, now = () => new Date(), wait = sleep }) {
   let active = null   // { id, controller }
 
   function historyMessages(limit) {
@@ -52,12 +61,32 @@ export function createChat({ host, chatLog, bus, ui, getConfig, getApiKey, descr
   }
 
   // 给模型看的文字：表情包有描述就带上描述（聊天记录里只记了「[表情：名字]」）
+  // 2026-10-30 改：以前写成「[表情：名字]（配字：…）」，她会照着这个样子自己打字，主人只看到一行字。
+  // 现在写成旁白（「（她发了一张表情：名字）」），不像一条能照着打的消息；聊天记录（chat-log）里还是「[表情：名字]」，给 DSH 看
   function contentOf(r) {
     const st = r.kind === 'sticker' ? r.meta?.sticker : null
-    if (st?.desc) return `${stickerText(st.name)}（${String(st.desc).slice(0, 200)}）`
-    if (st && r.role === 'user') return `${stickerText(st.name)}（主人发了一张图，你看不到画面，只知道它叫「${st.name}」）`
-    return String(r.text ?? '')
+    if (st && r.role === 'user') {
+      return st.desc ? `（主人发了一张表情：${st.name}。${String(st.desc).slice(0, 200)}）` : `（主人发了一张图，你看不到画面，只知道它叫「${st.name}」）`
+    }
+    if (st) return `（她发了一张表情：${st.name}）`
+    const text = String(r.text ?? '')
+    if (r.role !== 'assistant') return text
+    // 以前她自己打出来的那种（没变成图的）：也换成旁白，别让她以为那样写是对的
+    const typed = takeTypedStickers(text)
+    return [typed.text, ...typed.names.map((n) => `（她发了一张表情：${n}）`)].filter(Boolean).join('\n')
   }
+
+  // 她把表情打成了字：库里有这个名字就换成真的图（附在这次回复里），找不到就去掉；返回去掉之后的文字
+  function stickersFromText(text) {
+    const typed = takeTypedStickers(text)
+    for (const name of typed.names) {
+      const s = findSticker?.(name)
+      if (s && attachNow?.({ kind: 'sticker', box: 'her', id: s.id, name: s.name, desc: s.desc })) log('[chat] 她把表情打成了字，换成图：', name)
+      else log('[chat] 她打了一个表情的字（库里没有或这次已经发过），去掉：', name)
+    }
+    return typed.text
+  }
+  let attachNow = null   // 正在回复时的 attach（send 里设好）
 
   // 主人发的图：先看一眼（有缓存就不再看），再记成一条聊天记录
   async function userStickerRec(s) {
@@ -131,7 +160,7 @@ export function createChat({ host, chatLog, bus, ui, getConfig, getApiKey, descr
     let typingSince = 0        // 现在这条「正在输入」从什么时候开始的
     const finishPart = (i) => {
       done.add(i)
-      const text = parts[i].trim()
+      const text = stickersFromText(parts[i]).trim()
       if (!text) { ui.end(ids[i], null); return }   // 空的一条（比如一开头就是分隔符）：气泡拿掉
       const rec = chatLog.append({ role: 'assistant', text })
       ui.end(ids[i], rec)
@@ -156,6 +185,7 @@ export function createChat({ host, chatLog, bus, ui, getConfig, getApiKey, descr
       return true
     }
     const saveAttached = () => attached.map((it) => chatLog.append({ role: 'assistant', text: stickerText(it.name), kind: 'sticker', meta: { sticker: it } }))
+    attachNow = attach   // 她把表情打成字时，stickersFromText 用它换成图（和 send_sticker 一样算这次回复的那一张）
     try {
       const system = await host.buildSystemPrompt({ now: now(), userText: userContent })
       const messages = [{ role: 'system', content: system }, ...history, { role: 'user', content: userContent }]
@@ -213,6 +243,7 @@ export function createChat({ host, chatLog, bus, ui, getConfig, getApiKey, descr
       return { ok: false, error: msg }
     } finally {
       active = null
+      attachNow = null
       bus.emit('chat:busy', false)
     }
   }
@@ -235,7 +266,8 @@ export function createChat({ host, chatLog, bus, ui, getConfig, getApiKey, descr
         baseUrl: cfg.llm.baseUrl, apiKey: getApiKey(), model: cfg.llm.model, maxTokens, thinking: cfg.llm.thinking,
         messages, signal: controller.signal,
       })) if (ev.type === 'text') text += ev.delta
-      return splitParts(text.split(SILENT).join(''))   // 回了「不说」（或什么都没写）→ []
+      // 回了「不说」（或什么都没写）→ []。这里送不了图：她打成字的表情直接去掉
+      return splitParts(text.split(SILENT).join('')).map((p) => takeTypedStickers(p).text).filter(Boolean)
     } catch (e) {
       if (e?.name !== 'AbortError') log('[chat] 问她要不要说话，没问成：', e?.message ?? e)
       return null

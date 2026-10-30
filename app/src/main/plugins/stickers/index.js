@@ -1,7 +1,8 @@
 // 表情包：她的库在 ~/.whale-companion/stickers/（导入见 app/stickers/README.md）
 //   · 系统提示里放一段：有哪些表情包、什么时候用（偶尔用，不要每句都发）
 //   · 工具 send_sticker：按情绪 / 关键词挑一张，附在这次回复里
-//   · 冷却：发过一张之后，主人至少再说 3 句才能发下一张（光靠提示词管不住，程序里再卡一道）
+//   · 冷却：发过一张之后，要隔 COOLDOWN_TURNS 轮（主人每发一次消息算一轮）才能发下一张。
+//     现在是 1：每一轮最多一张（同一轮里再要就拒绝）；改成 3 就是发过之后主人再说 3 句才能再发
 //   · 偷图：主人发了一张她库里没有的表情包，她可以用 keep_sticker 问「这个能给我吗」（确认卡片），同意了就进她的库
 //   · 导入时没写描述的图（比如主人自己画的，只有文件名）：看图模型能用时在后台看一遍，补上配字、描述、情绪标签
 import fs from 'node:fs'
@@ -9,7 +10,7 @@ import path from 'node:path'
 import { readLibrary, pickSticker, updateSticker, addToLibrary, sniffImage, stickerId, EMOTIONS, SELF } from '../../core/stickers.js'
 import { findMine } from '../../core/my-stickers.js'
 
-export const COOLDOWN_TURNS = 3
+export const COOLDOWN_TURNS = 1
 
 /** 库里还没描述的图，看一遍补上（一次最多 limit 张；看不了的跳过，下次再试） */
 export async function describeMissing({ dir, vision, limit = 5, log = () => {} }) {
@@ -111,7 +112,8 @@ export default {
         return `［表情包］你有一些表情包，可以用 send_sticker 发给主人。
 - 偶尔用，不要每句都发：真的有情绪、发一张比说一句更好玩的时候才发。主人在说正事、难过、认真问问题时别发。
 - 程序会卡：发过一张之后要隔几句才能再发，被拒了就用文字说。
-- 不要自己在文字里写「[表情：…]」，那样主人只看到一行字。
+- 发表情只能调用 send_sticker。不要把表情写成文字（不写「[表情：…]」，也不写「（她发了一张表情：…）」这种），写出来主人只会看到一行字。
+- 聊天记录里的「（她发了一张表情：…）」「（主人发了一张表情：…）」是旁白，说明当时发过一张图，不是要你照着写的格式。
 ${groups.join('\n\n')}`
       },
     })
@@ -134,14 +136,15 @@ ${groups.join('\n\n')}`
         const turn = api.store.get('turn', 0)
         const last = api.store.get('lastTurn', null)
         if (last !== null && turn - last < COOLDOWN_TURNS) {
-          return { ok: false, error: `刚发过表情包，再聊 ${COOLDOWN_TURNS - (turn - last)} 句才能发下一张。这次用文字说就好，不用提这件事。` }
+          // 写清楚是「被冷却了、没发出去」：以前只说「刚发过」，她容易当成发出去了
+          return { ok: false, sent: false, error: '刚发过表情，这轮先不发（被冷却了，这张没有发出去）。用文字说就好，不用提这件事，也不要把表情写成文字。' }
         }
         const emotion = EMOTIONS.includes(args.emotion) ? args.emotion : undefined
         const recent = api.store.get('recent', [])
         const s = pickSticker(readLibrary(dir), { emotion, query: args.query, exclude: recent })
         if (!s) return { ok: false, error: '没有对得上的表情包，用文字说就好' }
         if (!ctx?.attach?.({ kind: 'sticker', box: 'her', id: s.id, name: s.name, desc: [s.caption && `配字：${s.caption}`, s.desc].filter(Boolean).join('；') })) {
-          return { ok: false, error: '这次回复已经发过一张了' }
+          return { ok: false, sent: false, error: '这轮已经发过一张了，这张没有发出去。用文字说就好' }
         }
         api.store.set('lastTurn', turn)
         api.store.set('recent', [s.id, ...recent.filter((x) => x !== s.id)].slice(0, 5))

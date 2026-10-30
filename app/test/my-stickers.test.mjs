@@ -116,14 +116,14 @@ test('主人发图：聊天记录记「[表情：名字]」，给她看的是配
   assert.equal(rows[1].kind, 'sticker')
   assert.deepEqual(rows[1].meta.sticker, { box: 'received', id: 'a'.repeat(16), name: '吃白饭的大肥鱼', hash: 'h', desc: '配字：吃白饭的大肥鱼；画面：摊手' })
   assert.equal(users.length, 2)
-  assert.equal(calls[0].at(-1).content, '你看\n[表情：吃白饭的大肥鱼]（配字：吃白饭的大肥鱼；画面：摊手）')
+  assert.equal(calls[0].at(-1).content, '你看\n（主人发了一张表情：吃白饭的大肥鱼。配字：吃白饭的大肥鱼；画面：摊手）')
 })
 
 test('看图模型不可用：退回用文件名，并告诉她看不到画面', async (t) => {
   const { chat, chatLog, calls } = await chatWith(t, async () => null)
   await chat.send('', { sticker: { box: 'mine', id: 'b'.repeat(16), name: '就一碗', hash: 'h2' } })
   assert.deepEqual(chatLog.recent(5).map((r) => r.text), ['[表情：就一碗]', '哈哈'])
-  assert.match(calls[0].at(-1).content, /^\[表情：就一碗\]（主人发了一张图，你看不到画面，只知道它叫「就一碗」）$/)
+  assert.equal(calls[0].at(-1).content, '（主人发了一张图，你看不到画面，只知道它叫「就一碗」）')
   // 看图那步抛错也一样
   const broken = await chatWith(t, async () => { throw new Error('boom') })
   assert.equal((await broken.chat.send('', { sticker: { box: 'mine', id: 'c'.repeat(16), name: 'x', hash: 'h3' } })).ok, true)

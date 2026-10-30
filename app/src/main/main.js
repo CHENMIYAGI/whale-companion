@@ -28,7 +28,7 @@ import { createBusy, releaseBubble } from './core/busy.js'
 import { startFullscreenWatch } from './core/fullscreen-watch.js'
 import { stickerResponse, avatarList } from './core/sticker-files.js'
 import { listMine, addToMine, saveReceived, findMine } from './core/my-stickers.js'
-import { sniffImage, STICKER_MAX_BYTES } from './core/stickers.js'
+import { sniffImage, STICKER_MAX_BYTES, readLibrary, stickerId } from './core/stickers.js'
 import { createVision, describeImage, DEFAULT_VISION_MODEL } from './core/vision.js'
 import { HELLO_LINES, BYE_LINES, EXIT_TOTAL_MS, pickLine } from './core/greetings.js'
 import { createHerSay } from './core/her-say.js'
@@ -865,6 +865,12 @@ function registerIpc() {
   })
 }
 
+// 她把表情打成了字（「[表情：好的主人]」）：按名字（或配字）在她的库里找，找到就换成真的图
+function findSticker(name) {
+  const s = readLibrary(paths.stickers).stickers.find((x) => x.name === name || x.caption === name)
+  return s ? { id: stickerId(s), name: s.name, desc: [s.caption && `配字：${s.caption}`, s.desc].filter(Boolean).join('；') } : null
+}
+
 // 主人发的图看一眼（{ box, id, name, hash, file }）：看过就用缓存，看不了返回 null
 async function lookAt(s) {
   const buffer = fs.readFileSync(s.file)
@@ -952,7 +958,7 @@ app.whenReady().then(async () => {
     } })
   } })
   await host.loadUserPlugins(paths.userPlugins)
-  chat = createChat({ host, chatLog, bus, ui, getConfig: () => config.get(), getApiKey: () => config.getApiKey(), log, describeSticker: lookAt })
+  chat = createChat({ host, chatLog, bus, ui, getConfig: () => config.get(), getApiKey: () => config.getApiKey(), log, describeSticker: lookAt, findSticker })
   herSay = createHerSay({
     chatLog, bus, log,
     chat: { start: (id) => sendChat({ type: 'start', id }), delta: (id, text) => sendChat({ type: 'delta', id, text }), end: (id, message) => sendChat({ type: 'end', id, message }) },
