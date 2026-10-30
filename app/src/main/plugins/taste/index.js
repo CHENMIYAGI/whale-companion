@@ -56,8 +56,8 @@ export default {
     })
 
     api.registerMenu({
-      id: 'view', order: 47, icon: '🏷️',
-      label: '她的分类',
+      id: 'view', order: 43, icon: '🏷️', group: 'look',   // 右键「👀 看看…」里
+      label: '看看她的分类',
       enabled: () => readTaste(file).categories.length > 0,
       hint: () => (readTaste(file).categories.length ? '' : '她还没分过类'),
       onClick: () => {

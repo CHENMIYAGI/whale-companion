@@ -28,8 +28,8 @@ export default {
     })
 
     api.registerMenu({
-      id: 'view', order: 46, icon: '👀',
-      label: '她眼中的我',
+      id: 'view', order: 47, icon: '👀', group: 'look',   // 右键「👀 看看…」里
+      label: '看看她眼中的我',
       enabled: () => readView(file).length > 0,
       hint: () => (readView(file) ? '' : '她还没写'),
       onClick: () => api.services.openPath(file),

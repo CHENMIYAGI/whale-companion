@@ -31,7 +31,7 @@ test('还没写：上下文里没有，菜单灰着并说原因；桌宠这边�
   const { host } = await setup(t)
   assert.equal(await host.buildSystemPrompt({ now, userText: '' }), '')
   const m = host.menuItems().find((x) => x.id === 'owner-view/view')
-  assert.deepEqual([m.label, m.icon, m.enabled, m.hint], ['她眼中的我', '👀', false, '她还没写'])
+  assert.deepEqual([m.label, m.icon, m.enabled, m.hint], ['看看她眼中的我', '👀', false, '她还没写'])
   assert.deepEqual(host.toolSpecs(), [])
 })
 

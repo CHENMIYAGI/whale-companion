@@ -147,6 +147,7 @@ export default {
       id: 'view',
       label: '看看她的小本本',
       icon: '📒',
+      group: 'look',
 
       // 小本本为空时，菜单项变灰，不能点击
       enabled: () => api.store.get('items', []).length > 0,

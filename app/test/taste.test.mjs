@@ -83,7 +83,7 @@ test('右键「她的分类」：没分过类时灰着；有了就生成一份�
   const h0 = createPluginHost({ bus: new EventEmitter(), log: () => {}, getConfig: () => ({ plugins: {} }), updateConfig: () => {}, services: { paths: empty, openPath: () => {} } })
   await h0.load(tastePlugin)
   const m0 = h0.menuItems().find((x) => x.id === 'taste/view')
-  assert.deepEqual([m0.label, m0.enabled, m0.hint], ['她的分类', false, '她还没分过类'])
+  assert.deepEqual([m0.label, m0.enabled, m0.hint], ['看看她的分类', false, '她还没分过类'])
 
   const { paths, host, opened } = await setup(t)
   recordEvent({ file: paths.taste, videosRoot: paths.videos, bv: CAT, kind: 'shown' })

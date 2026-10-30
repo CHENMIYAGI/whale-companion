@@ -11,7 +11,8 @@
  *       api.registerTool({ name, description, parameters, confirm, run })  // 给聊天模型一个能力
  *       api.registerMenu({ id, label, order, enabled, onClick })           // 右键菜单
  *         可选：icon（一个 emoji）、hint（灰掉时写原因，比如 'DSH 没开'）、toggle（true/false：显示成开关）；
- *         label/enabled/icon/hint/toggle 都可以是函数
+ *         label/enabled/icon/hint/toggle 都可以是函数；
+ *         group（2026-10-30）：放进哪个二级菜单，比如 'look'（「👀 看看…」）；不写就在主菜单
  *       api.on('chat:user', fn)     // 订阅事件
  *       api.say('一句话')            // 桌宠冒气泡
  *     },
@@ -59,9 +60,11 @@ export function createPluginHost({ bus, log = console.log, getConfig, updateConf
         tools.set(t.name, { pluginId: id, parameters: { type: 'object', properties: {} }, ...t })
         own(() => { if (tools.get(t.name)?.pluginId === id) tools.delete(t.name) })
       },
-      // icon / hint / toggle 是后加的可选项：旧写法（只有 label / enabled）照样能用
-      registerMenu({ id: mid, label, order = 50, enabled, icon, hint, toggle, onClick }) {
-        const m = { pluginId: id, id: `${id}/${mid}`, label, order, enabled, icon, hint, toggle, onClick }
+      // icon / hint / toggle / group 是后加的可选项：旧写法（只有 label / enabled）照样能用
+      // group 只认小写字母、数字、横杠（不对就当没写，还在主菜单）
+      registerMenu({ id: mid, label, order = 50, enabled, icon, hint, toggle, group, onClick }) {
+        const g = typeof group === 'string' && /^[a-z0-9-]{1,20}$/.test(group) ? group : undefined
+        const m = { pluginId: id, id: `${id}/${mid}`, label, order, enabled, icon, hint, toggle, group: g, onClick }
         menus.push(m)
         own(() => { const i = menus.indexOf(m); if (i >= 0) menus.splice(i, 1) })
       },
@@ -159,7 +162,7 @@ export function createPluginHost({ bus, log = console.log, getConfig, updateConf
         // toggle 没写 = 普通菜单项（undefined）；写了就只认 true/false，函数出错当成关
         let toggle
         if (m.toggle !== undefined) { try { toggle = !!(typeof m.toggle === 'function' ? m.toggle() : m.toggle) } catch { toggle = false } }
-        return { id: m.id, label: label ?? m.id, enabled: enabled && label !== null, icon: text(m.icon) ?? '', hint: text(m.hint) ?? '', toggle }
+        return { id: m.id, label: label ?? m.id, enabled: enabled && label !== null, icon: text(m.icon) ?? '', hint: text(m.hint) ?? '', toggle, group: m.group, order: m.order }
       })
     },
     async clickMenu(id) {

@@ -39,7 +39,7 @@ export default {
     })
 
     api.registerMenu({
-      id: 'open-diary', label: '翻翻她的日记', order: 40, icon: '📖',
+      id: 'open-diary', label: '看看日记', order: 40, icon: '📖', group: 'look',   // 右键「👀 看看…」里
       enabled: () => fs.existsSync(paths.diary),
       hint: () => (fs.existsSync(paths.diary) ? '' : '她还没写过'),
       onClick: () => openPath(paths.diary),

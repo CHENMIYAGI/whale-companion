@@ -37,3 +37,12 @@ body { padding: var(--margin); font: 13px/1.4 "Microsoft YaHei UI", "PingFang SC
 .tog::after { content: ""; position: absolute; left: 2px; top: 2px; width: 13px; height: 13px; border-radius: 50%; background: #fff; transition: left 0.15s; }
 .tog.on { background: var(--blue); }
 .tog.on::after { left: 15px; }
+
+/* 二级菜单（2026-10-30）：主菜单和子菜单都绝对定位，展开时主进程把窗口放大、告诉我们两块各放哪（menu:layout） */
+#box, #sub { position: absolute; left: var(--margin); top: var(--margin); }
+#sub { width: 216px; padding: 6px 0; border-radius: 14px; background: var(--paper);
+  box-shadow: 0 6px 14px rgba(20, 30, 70, 0.28), 0 0 0 1px rgba(44, 50, 99, 0.22); }
+#sub[hidden] { display: none; }
+.mi .arrow { margin-left: auto; flex: none; padding-left: 6px; color: var(--ink-2); font-size: 14px; line-height: 1; }
+.mi .hint + .arrow { margin-left: 0; }
+.mi.open { background: var(--sky-soft); color: var(--navy); }   /* 子菜单开着时，点开它的那一行一直亮着 */

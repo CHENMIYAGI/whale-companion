@@ -136,6 +136,7 @@ contextBridge.exposeInMainWorld('chat', {
 // ── 右键菜单（自己画的小窗口）─────────────────────────────────────────────
 contextBridge.exposeInMainWorld('menu', {
   // 主进程 → 网页：要显示的内容 { name, status, items: [{ kind, id, icon, label, hint, enabled, toggle, danger }] }
+  //   kind: 'item' / 'sep' / 'submenu'（二级菜单，多一个 items：子菜单里的项）
   onShow: (fn) =>
     ipcRenderer.on('menu:show', (event, data) => fn(data)),
 
@@ -146,4 +147,12 @@ contextBridge.exposeInMainWorld('menu', {
   pick: (id) => ipcRenderer.send('menu:pick', String(id)),
 
   close: () => ipcRenderer.send('menu:close'),
+
+  // 二级菜单展开（子菜单多高、点开的那一行离菜单顶多远）/ 收起：主进程改窗口大小，再回一个 layout
+  sub: (open, rowTop, height) =>
+    ipcRenderer.send('menu:sub', { open: open === true, rowTop: Number(rowTop) || 0, height: Number(height) || 0 }),
+
+  // 主进程 → 网页：主菜单和子菜单在窗口里放哪 { main: {x, y}, sub: {x, y} | null }
+  onLayout: (fn) =>
+    ipcRenderer.on('menu:layout', (event, data) => fn(data)),
 })

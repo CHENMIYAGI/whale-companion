@@ -1,6 +1,8 @@
 // 视频笔记：她在 DSH 里看过的视频（~/.dsh/whale-videos/<BV>/）—— 桌宠这边只读
 //   · 工具 recall_video：主人聊起某个视频时，按 BV 或关键词（标题、她的笔记、日期）找回来，返回相关的片段
-import { recallVideos } from '../../core/video-notes.js'
+import fs from 'node:fs'
+import path from 'node:path'
+import { recallVideos, listVideos, notesReport } from '../../core/video-notes.js'
 
 export default {
   id: 'video-notes',
@@ -28,6 +30,21 @@ export default {
         // 主人聊起这个视频她才去翻 → 算「聊到了」（口味插件记一笔）；对得上好几个就不算
         if (r.ok && r.videos?.length === 1) api.emit('video:recalled', r.videos[0].bv)
         return r
+      },
+    })
+
+    // 右键「👀 看看…」→「看看视频笔记」：写一份能读的摘要再打开（和「看看她的分类」一样）
+    api.registerMenu({
+      id: 'view', order: 42, icon: '🎞️', group: 'look',
+      label: '看看视频笔记',
+      enabled: () => listVideos(root).length > 0,
+      hint: () => (listVideos(root).length ? '' : '她还没有视频笔记'),
+      onClick: () => {
+        const { paths } = api.services
+        const out = path.join(paths.app, '视频笔记.txt')
+        fs.mkdirSync(paths.app, { recursive: true })
+        fs.writeFileSync(out, notesReport(root), 'utf8')
+        api.services.openPath(out)
       },
     })
   },

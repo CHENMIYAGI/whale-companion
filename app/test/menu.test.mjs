@@ -61,7 +61,7 @@ test('新写法：icon、hint 可以是字符串或函数；enabled 也可以直
   } })
   assert.deepEqual(h.menuItems().map((m) => [m.label, m.icon, m.enabled, m.hint]), [['随便去刷一会儿', '📺', false, 'DSH 没开'], ['关着的', '🔒', false, '还没做']])
   online = true
-  assert.deepEqual(h.menuItems()[0], { id: 'whale/wake', label: '随便去刷一会儿', icon: '📺', enabled: true, hint: '', toggle: undefined })
+  assert.deepEqual(h.menuItems()[0], { id: 'whale/wake', label: '随便去刷一会儿', icon: '📺', enabled: true, hint: '', toggle: undefined, group: undefined, order: 50 })
 })
 
 test('toggle：没写就是普通项；写了显示成开关（函数出错当成关）', async () => {

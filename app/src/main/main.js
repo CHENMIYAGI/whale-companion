@@ -21,7 +21,8 @@ import { createKv } from './core/kv.js'
 import { createPluginHost } from './core/plugin-host.js'
 import { createChat } from './core/chat.js'
 import { listModels, explainError } from './core/llm.js'
-import { placeMenu } from './core/menu-place.js'
+import { placeMenu, placeSubmenu } from './core/menu-place.js'
+import { groupMenuItems, busyMenu } from './core/menu-build.js'
 import { placeChat } from './core/chat-place.js'
 import { trayTemplate } from './core/tray-menu.js'
 import { createBusy, releaseBubble } from './core/busy.js'
@@ -515,40 +516,46 @@ function openMenu() {
   log('[菜单] 打开：鼠标', menuAt, '窗口', menuWin.isVisible() ? '可见' : '隐藏', '网页', menuWin.webContents.isLoading() ? '还在加载' : '已加载')
   clearTimeout(menuWaiting)
   menuWaiting = setTimeout(() => log('[菜单] 1.5 秒没等到网页回话（menu:ready），菜单没显示出来'), 1500)
+  // 2026-10-30 改成两层：插件写了 group 的进二级菜单（「👀 看看…」），「我在忙」也是二级菜单
   const actions = new Map()
-  const items = []
-  const item = (id, icon, label, run, extra = {}) => {
+  let items = []
+  const entry = (id, icon, label, run, extra = {}) => {
     const enabled = extra.enabled !== false
     if (enabled) actions.set(id, run)
-    items.push({ kind: 'item', id, icon, label, enabled, hint: extra.hint ?? '', toggle: extra.toggle, danger: !!extra.danger })
+    return { kind: 'item', id, icon, label, enabled, hint: extra.hint ?? '', toggle: extra.toggle, danger: !!extra.danger }
   }
-  const sep = () => items.push({ kind: 'sep' })
+  const item = (...a) => items.push(entry(...a))
+  const sep = () => { if (items.length && items.at(-1).kind !== 'sep') items.push({ kind: 'sep' }) }
+  const submenu = (id, icon, label, children, hint = '') => items.push({ kind: 'submenu', id, icon, label, hint, enabled: true, items: children })
 
-  if (chatWin?.isVisible()) item('chat', '💬', '收起对话框', () => chatWin?.hide())
-  else item('chat', '💬', '和她聊天', showChat)
-  const plugin = host.menuItems()
-  if (plugin.length) sep()
-  for (const m of plugin) item('plugin:' + m.id, m.icon || '🧩', m.label, () => host.clickMenu(m.id), { enabled: m.enabled, hint: m.hint, toggle: m.toggle })
-  // 我在忙（设置里关了就不显示）
-  if (config.get().busy?.manual !== false) {
-    sep()
-    const left = manualLeft()
-    if (left) item('busy-off', '🔔', '不忙了', () => setManualBusy('off'), { hint: left })
-    else {
-      item('busy-30m', '🔕', '我在忙 30 分钟', () => setManualBusy('30m'))
-      item('busy-1h', '🔕', '我在忙 1 小时', () => setManualBusy('1h'))
-      item('busy-until', '🔕', '我在忙（直到我说）', () => setManualBusy('until'))
-    }
-  }
-  // 一起看：正在看就能暂停 / 继续 / 结束；清单随时能打开
-  sep()
+  // 一起看：正在看就把暂停 / 继续 / 结束放在最上面
   if (watch) {
     const paused = watch.session?.status().paused
     if (watch.session) item('watch-toggle', paused ? '▶' : '⏸', paused ? '继续一起看' : '暂停一起看', () => controlWatch(paused ? 'resume' : 'pause'))
     item('watch-end', '⏹', '结束一起看', () => controlWatch('end'), { hint: watch.preparing ? '她还在准备' : '' })
+    sep()
   }
+  if (chatWin?.isVisible()) item('chat', '💬', '收起对话框', () => chatWin?.hide())
+  else item('chat', '💬', '和她聊天', showChat)
+
+  // 插件的菜单项：没写 group 的在主菜单，写了的进二级菜单。「看看一起看的清单」是这里自己的，也放进「看看…」
   const waiting = laterEntries(paths.taste).length
-  item('watch-list', '🎬', '一起看的清单', () => { showChat(); sendChat({ type: 'open-watch-list' }) }, { hint: waiting ? `${waiting} 个` : '还是空的' })
+  const watchList = { id: 'watch-list', icon: '🎬', label: '看看一起看的清单', group: 'look', order: 44, enabled: true, hint: waiting ? `${waiting} 个` : '还是空的', own: () => { showChat(); sendChat({ type: 'open-watch-list' }) } }
+  const { top, groups } = groupMenuItems(host.menuItems(), [watchList])
+  const pluginEntry = (m) => (m.own ? entry(m.id, m.icon, m.label, m.own, { hint: m.hint })
+    : entry('plugin:' + m.id, m.icon || '🧩', m.label, () => host.clickMenu(m.id), { enabled: m.enabled, hint: m.hint, toggle: m.toggle }))
+  if (top.length) sep()
+  for (const m of top) items.push(pluginEntry(m))
+  sep()
+  for (const g of groups) submenu('group:' + g.group, g.icon, g.label, g.items.map(pluginEntry))
+
+  // 我在忙（设置里关了就不显示）：在忙的时候主菜单这一项写还剩多久，子菜单里多一项「我忙完了」
+  if (config.get().busy?.manual !== false) {
+    const m = busy?.manual()
+    const b = busyMenu(m ? (m.until === null ? Infinity : m.until - Date.now()) : null)
+    const run = { 'busy-off': () => setManualBusy('off'), 'busy-30m': () => setManualBusy('30m'), 'busy-1h': () => setManualBusy('1h'), 'busy-until': () => setManualBusy('until') }
+    submenu('group:busy', b.icon, b.label, b.items.map((x) => (x.kind === 'sep' ? x : entry(x.id, x.icon, x.label, run[x.id]))))
+  }
   sep()
   item('settings', '⚙', '设置…', () => { showChat(); sendChat({ type: 'open-settings' }) })
   const onTop = config.get().pet?.alwaysOnTop !== false
@@ -567,10 +574,29 @@ function showMenuAt(height) {
   const box = { w: MENU_W, h: Math.max(40, Math.min(Math.round(height), 900)) }
   const area = screen.getDisplayNearestPoint(menuAt).workArea
   const bounds = placeMenu({ cursor: menuAt, box, margin: MENU_MARGIN, area })
+  // 记下主菜单本身在屏幕上的位置大小（展开二级菜单时按它算，不读回窗口大小）
+  menuMain = { x: bounds.x + MENU_MARGIN, y: bounds.y + MENU_MARGIN, w: box.w, h: box.h, bounds, area }
   menuWin.setBounds(bounds)   // setBounds：缩放下 setPosition 会让窗口越变越大
+  menuWin.webContents.send('menu:layout', { main: { x: 0, y: 0 }, sub: null })
   menuWin.show()
   menuWin.focus()
   log('[菜单] 显示', bounds, '拿到焦点', menuWin.isFocused())
+}
+
+// 二级菜单展开 / 收起（网页量好子菜单多高、点开的那一行在哪，告诉我们）：
+// 窗口改成装得下两块的大小（固定尺寸 setBounds，不读回窗口大小再加 —— 125% 缩放下读回来的会多 1，越变越大）
+let menuMain = null   // { x, y, w, h, bounds, area }：主菜单本身在屏幕上的位置，和只有主菜单时的窗口
+function onMenuSub(a) {
+  if (!menuWin || !menuMain) return
+  if (!a?.open) {
+    menuWin.setBounds(menuMain.bounds)
+    menuWin.webContents.send('menu:layout', { main: { x: 0, y: 0 }, sub: null })
+    return
+  }
+  const sub = { w: MENU_W, h: Math.max(30, Math.min(Math.round(Number(a.height) || 0), 900)) }
+  const p = placeSubmenu({ main: menuMain, rowTop: Math.max(0, Number(a.rowTop) || 0), sub, margin: MENU_MARGIN, area: menuMain.area })
+  menuWin.setBounds(p.bounds)
+  menuWin.webContents.send('menu:layout', { main: p.main, sub: p.sub, side: p.side })
 }
 
 // 网页出错 / 渲染进程崩了：以前这些都悄无声息，"点了没反应"时日志里什么都没有
@@ -688,6 +714,7 @@ function registerIpc() {
   const fromMenu = (e) => menuWin && !menuWin.isDestroyed() && e.sender.id === menuWin.webContents.id
   on('menu:ready', (h, e) => { if (fromMenu(e) && Number.isFinite(h)) showMenuAt(h) })
   on('menu:close', (_, e) => { if (fromMenu(e)) hideMenu('Esc') })
+  on('menu:sub', (a, e) => { if (fromMenu(e)) onMenuSub(a) })
   on('menu:pick', (id, e) => {
     if (!fromMenu(e)) return
     const run = menuActions.get(String(id))   // 不在这次菜单里、或是灰掉的项：不认

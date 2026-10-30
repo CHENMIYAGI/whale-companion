@@ -61,7 +61,7 @@ test('第二天第一次聊天带上梦（写明不是真的、别记进小本�
   const opened = []
   const host = createPluginHost({ bus: new EventEmitter(), log: () => {}, getConfig: () => ({ plugins: {} }), updateConfig: () => {}, services: { paths: p, openPath: (f) => opened.push(f) } })
   await host.load(dreamsPlugin)
-  assert.deepEqual(host.menuItems().map((m) => [m.label, m.enabled, m.hint]), [['她的梦', false, '她还没做过梦']])
+  assert.deepEqual(host.menuItems().map((m) => [m.label, m.enabled, m.hint]), [['看看她的梦', false, '她还没做过梦']])
 
   appendDream(p.dreams, { at: at(29, 3), text: '我梦见主人变成了一只猫，在键盘上睡觉。' })
   const first = await host.buildSystemPrompt({ now: at(29, 10) })

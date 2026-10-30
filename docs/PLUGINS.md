@@ -28,7 +28,7 @@ export default {
 |---|---|
 | `api.registerContext({ id, order, build })` | 往聊天的系统提示里加一段。`build({ now, userText })` 返回文字（空字符串 = 这次不加）。`order` 小的在前；**不常变的内容用小 order**，能多命中 DeepSeek 的上下文缓存、更省钱 |
 | `api.registerTool({ name, label, description, parameters, confirm, silent, run })` | 给聊天模型一个能力。`parameters` 是 JSON Schema；`run(args, ctx)` 返回一个对象给模型看（建议 `{ ok, ... }` / `{ ok: false, error }`）。`confirm`：需要主人点头的，返回 `{ title, text, okLabel, cancelLabel }` 就会弹确认卡片。`silent: true` 不显示「…✓」小提示 |
-| `api.registerMenu({ id, label, order, enabled, icon, hint, toggle, onClick })` | 右键菜单加一项。`label / enabled / icon / hint / toggle` 都可以是函数（每次弹菜单时算）；灰掉时用 `hint` 写原因 |
+| `api.registerMenu({ id, label, order, enabled, icon, hint, toggle, group, onClick })` | 右键菜单加一项。`label / enabled / icon / hint / toggle` 都可以是函数（每次弹菜单时算）；灰掉时用 `hint` 写原因。`group`（可选）：放进哪个二级菜单，见下面「二级菜单」 |
 | `api.on(事件, fn)` | 订阅事件：`chat:user`（主人说了一句）、`chat:assistant`（她说了一句）、`chat:busy`、`chat:incoming`（她从 DSH 发回来的话）、`video:open`、`pet:base`（她的状态变了）…… |
 | `api.say(text)` | 桌宠冒一个气泡 |
 | `api.every(ms, fn)` | 定时任务（卸载时自动清掉） |
@@ -38,6 +38,24 @@ export default {
 | `api.log(...)` | 写进 `companion.log`，前面带插件 id |
 
 完整说明在 [`app/src/main/core/plugin-host.js`](../app/src/main/core/plugin-host.js) 的开头。
+
+## 二级菜单（`group`）
+
+右键菜单是两层的。菜单项写了 `group`，就进对应的二级菜单；没写就在主菜单（以前写的插件不用改，照样能用）。
+
+| group | 二级菜单 | 放什么 |
+|---|---|---|
+| `'look'` | 「👀 看看…」 | 打开来看看的东西：日记、小本本、视频笔记、她的分类、她的梦……名字请以「看看」开头 |
+| 别的名字（小写字母、数字、横杠） | 「🧩 名字…」 | 自己起一组 |
+
+```js
+api.registerMenu({
+  id: 'view', label: '看看周末计划', icon: '🗓️', group: 'look', order: 49,
+  onClick: () => api.services.openPath(file),
+})
+```
+
+`order` 决定在二级菜单里的位置（小的在前）。内置的「看看…」用了 40～47，接在后面就写 48 以上。
 
 ## 设计插件时想清楚这五件事
 

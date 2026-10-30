@@ -95,3 +95,19 @@ export function recallVideos(root, { query, at } = {}) {
     note: hits.length > 3 ? `一共 ${hits.length} 个对得上，只给了最像的 3 个。` : '这是你自己看过的视频的笔记。',
   }
 }
+
+/** 右键「看看视频笔记」打开的那份：最近看的在前，每个视频：标题、进度、分类、最近几条笔记 */
+export function notesReport(root, { max = 30 } = {}) {
+  const list = listVideos(root).sort((a, b) => String(b.progress.lastSeen ?? '').localeCompare(String(a.progress.lastSeen ?? '')))
+  const lines = ['她的视频笔记（她在 DSH 里看过的视频；字幕、弹幕是网上的，笔记是她自己记的）', '']
+  if (!list.length) return lines.concat('（她还没有视频笔记）').join('\n')
+  for (const v of list.slice(0, max)) {
+    const b = brief(v)
+    lines.push(`【${b.title || v.bv}】${v.bv}  ${b.progress}${b.category ? `  分类：${b.category}` : ''}`)
+    if (b.up) lines.push(`  UP：${b.up}  看过的日子：${b.dates.join('、') || '-'}`)
+    for (const n of v.notes.slice(-5)) lines.push(`  [${fmtTime(n.at)}] ${n.text}`)
+    lines.push('')
+  }
+  if (list.length > max) lines.push(`……还有 ${list.length - max} 个更早的`)
+  return lines.join('\n')
+}

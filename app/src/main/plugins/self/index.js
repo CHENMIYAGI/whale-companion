@@ -64,7 +64,7 @@ export default {
     })
 
     api.registerMenu({
-      id: 'view', order: 45, icon: '🌱',
+      id: 'view', order: 46, icon: '🌱', group: 'look',   // 右键「👀 看看…」里
       label: '看看她的成长',
       enabled: () => readSelf(file).length > 0,
       hint: () => (readSelf(file).length > 0 ? '' : '她还没写'),

@@ -23,8 +23,8 @@ export default {
     })
 
     api.registerMenu({
-      id: 'view', order: 48, icon: '💭',
-      label: '她的梦',
+      id: 'view', order: 45, icon: '💭', group: 'look',   // 右键「👀 看看…」里
+      label: '看看她的梦',
       enabled: () => fs.existsSync(file),
       hint: () => (fs.existsSync(file) ? '' : '她还没做过梦'),
       onClick: () => api.services.openPath(file),

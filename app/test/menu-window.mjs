@@ -118,6 +118,116 @@ app.whenReady().then(async () => {
   console.log(`  隐藏 3 秒后：${ok(await readyWithin(1000))}`)
   real.destroy()
 
+  // ── 二级菜单（2026-10-30）──
+  // 假主进程照 main.js 的做法：展开时用 placeSubmenu 算好、setBounds 固定尺寸，再告诉网页两块各放哪
+  console.log('\n【二级菜单】')
+  const { placeSubmenu } = await import('../src/main/core/menu-place.js')
+  const { screen } = await import('electron')
+  const area = screen.getPrimaryDisplay().workArea
+  let mainAt = null
+  const subLog = []
+  ipcMain.on('menu:sub', (e, a) => {
+    subLog.push(a)
+    if (!mainAt) return
+    if (!a.open) { win.setBounds(mainAt.bounds); win.webContents.send('menu:layout', { main: { x: 0, y: 0 }, sub: null }); return }
+    const p = placeSubmenu({ main: mainAt, rowTop: a.rowTop, sub: { w: 216, h: Math.round(a.height) }, margin: MARGIN, area })
+    win.setBounds(p.bounds)
+    win.webContents.send('menu:layout', { main: p.main, sub: p.sub, side: p.side })
+  })
+  const look = ['看看日记', '看看小本本', '看看视频笔记', '看看她的分类', '看看一起看的清单', '看看她的梦', '看看她的成长', '看看她眼中的我']
+  const items2 = [
+    { kind: 'item', id: 'watch-toggle', icon: '⏸', label: '暂停一起看', enabled: true },
+    { kind: 'item', id: 'watch-end', icon: '⏹', label: '结束一起看', enabled: true },
+    { kind: 'sep' },
+    { kind: 'item', id: 'chat', icon: '💬', label: '和她聊天', enabled: true },
+    { kind: 'sep' },
+    { kind: 'item', id: 'plugin:bili-whale/wake', icon: '📺', label: '随便去刷一会儿', enabled: true },
+    { kind: 'sep' },
+    { kind: 'submenu', id: 'group:look', icon: '👀', label: '看看…', enabled: true, items: look.map((label, i) => ({ kind: 'item', id: 'look-' + i, icon: '📖', label, enabled: i !== 5, hint: i === 5 ? '她还没做过梦' : '' })) },
+    { kind: 'submenu', id: 'group:busy', icon: '🔕', label: '忙着呢 · 还剩 23 分', enabled: true, items: [
+      { kind: 'item', id: 'busy-off', icon: '🔔', label: '我忙完了', enabled: true }, { kind: 'sep' },
+      { kind: 'item', id: 'busy-30m', icon: '🔕', label: '忙 30 分钟', enabled: true }, { kind: 'item', id: 'busy-1h', icon: '🔕', label: '忙 1 小时', enabled: true },
+      { kind: 'item', id: 'busy-until', icon: '🔕', label: '一直忙，直到我说', enabled: true }] },
+    { kind: 'sep' },
+    { kind: 'item', id: 'settings', icon: '⚙', label: '设置…', enabled: true },
+    { kind: 'item', id: 'quit', icon: '⏻', label: '退出', enabled: true, danger: true },
+  ]
+  const show2 = async (x = 400, y = 150) => {
+    for (let i = got.length - 1; i >= 0; i--) if (got[i][0] === 'menu:ready') got.splice(i, 1)
+    win.webContents.send('menu:show', { name: '大肥鱼', status: '和你一起看', items: items2 })
+    for (let t = 0; t < 2000 && last('menu:ready') === undefined; t += 20) await wait(20)
+    const hh = Math.round(last('menu:ready'))
+    const bounds = { x, y, width: 216 + 2 * MARGIN, height: hh + 2 * MARGIN }
+    mainAt = { x: x + MARGIN, y: y + MARGIN, w: 216, h: hh, bounds }
+    win.setBounds(bounds)
+    win.webContents.send('menu:layout', { main: { x: 0, y: 0 }, sub: null })
+    await wait(150)
+  }
+  const subShown = () => js(`!document.getElementById('sub').hidden && document.getElementById('sub').style.visibility !== 'hidden'`)
+  const rowCenter = async (text) => JSON.parse(await js(`(r => JSON.stringify({ x: Math.round(r.x + 30), y: Math.round(r.y + r.height / 2) }))([...document.querySelectorAll('#list .mi')].find(r => r.textContent.includes(${JSON.stringify(text)})).getBoundingClientRect())`))
+  const move = async (p) => { win.webContents.sendInputEvent({ type: 'mouseMove', x: p.x, y: p.y }); await wait(30) }
+
+  await show2()
+  console.log(`  主菜单：${await js(`[...document.querySelectorAll('#list .mi .label')].map(l => l.textContent).join(' / ')`)}`)
+  console.log(`  一起看的暂停 / 结束在最上面：${ok((await js(`document.querySelector('#list .mi .label').textContent`)) === '暂停一起看')}，有 › 的：${await js(`[...document.querySelectorAll('#list .mi')].filter(r => r.querySelector('.arrow')).map(r => r.querySelector('.label').textContent).join('、')`)}`)
+  const lookRow = await rowCenter('看看…')
+  await move(lookRow); await wait(100)
+  console.log(`  鼠标停 0.1 秒：还没展开 ${ok(!(await subShown()))}`)
+  await wait(250)
+  console.log(`  停够 0.2 秒：展开了 ${ok(await subShown())}，子菜单：${await js(`[...document.querySelectorAll('#subList .mi .label')].map(l => l.textContent).join(' / ')`)}`)
+  console.log(`  子项都以「看看」开头：${ok(await js(`[...document.querySelectorAll('#subList .mi .label')].every(l => l.textContent.startsWith('看看'))`))}`)
+  const wb = win.getBounds()
+  console.log(`  窗口放大成装得下两块：${wb.width}×${wb.height}（主菜单 ${216 + 2 * MARGIN} 宽）  ${ok(wb.width >= 216 * 2 + 2 * MARGIN)}`)
+  await js(`document.body.style.background = 'linear-gradient(160deg,#7d9cc8,#d8e2ef)'`)
+  await move(JSON.parse(await js(`(r => JSON.stringify({ x: Math.round(r.x + 40), y: Math.round(r.y + r.height / 2) }))(document.querySelectorAll('#subList .mi')[2].getBoundingClientRect())`)))
+  await wait(100)
+  fs.writeFileSync(path.join(OUT, 'menu-submenu.png'), (await win.webContents.capturePage()).toPNG())
+  await js(`document.body.style.background = ''`)
+  // 斜着走：从「看看…」往右下的子菜单走，路过「我在忙」那一行 —— 0.3 秒内进了子菜单就不收起
+  await show2()
+  await move(lookRow); await wait(300)
+  const busyRow = await rowCenter('忙着呢')
+  await move({ x: busyRow.x + 150, y: busyRow.y })   // 路过下一行（靠右边，往子菜单去）
+  await wait(120)
+  const subItem = JSON.parse(await js(`(r => JSON.stringify({ x: Math.round(r.x + 40), y: Math.round(r.y + r.height / 2) }))(document.querySelectorAll('#subList .mi')[4].getBoundingClientRect())`))
+  await move(subItem); await wait(400)
+  console.log(`  斜着走进子菜单：没被收起 ${ok(await subShown())}，还是「看看…」的子菜单 ${ok((await js(`document.querySelector('#subList .mi .label').textContent`)) === '看看日记')}`)
+  got.length = 0
+  win.webContents.sendInputEvent({ type: 'mouseDown', x: subItem.x, y: subItem.y, button: 'left', clickCount: 1 }); win.webContents.sendInputEvent({ type: 'mouseUp', x: subItem.x, y: subItem.y, button: 'left', clickCount: 1 }); await wait(80)
+  console.log(`  点子菜单里的一项发过去：${last('menu:pick')}  ${ok(last('menu:pick') === 'look-4')}`)
+  // 真的移到别的行停下：收起
+  await show2()
+  await move(lookRow); await wait(300)
+  await move(await rowCenter('设置')); await wait(450)
+  console.log(`  移到别的行停住：子菜单收起 ${ok(!(await subShown()))}，窗口回到原大小 ${ok(win.getBounds().width === 216 + 2 * MARGIN)}`)
+  // 点一下也能展开
+  await show2()
+  await js(`[...document.querySelectorAll('#list .mi')].find(r => r.textContent.includes('忙着呢')).click()`); await wait(150)
+  console.log(`  点一下展开「我在忙」：${await js(`[...document.querySelectorAll('#subList .mi .label')].map(l => l.textContent).join(' / ')`)}`)
+  // 键盘（先把鼠标移到角落：不然画好的菜单正好在鼠标底下，那一行会被鼠标点亮）
+  await move({ x: 2, y: 2 })
+  await show2()
+  for (let i = 0; i < 5; i++) await key('Down')
+  console.log(`  键盘走到：${await activeLabel()}`)
+  await key('Right'); await wait(150)
+  console.log(`  → 展开并进到子菜单：${ok(await subShown())}，高亮 ${await js(`document.querySelector('#subList .mi.active .label')?.textContent`)}`)
+  await key('Down'); await key('Down')
+  console.log(`  子菜单里 ↓↓（跳过灰掉的项）：${await js(`document.querySelector('#subList .mi.active .label')?.textContent`)}`)
+  await key('Left'); await wait(100)
+  console.log(`  ← 回到主菜单：子菜单收起 ${ok(!(await subShown()))}，高亮回到 ${await activeLabel()}`)
+  await key('Return'); await wait(150)
+  got.length = 0
+  await key('Escape'); await wait(100)
+  console.log(`  回车展开后 Esc：只收起子菜单 ${ok(!(await subShown()))}，菜单没关 ${ok(!got.some((g) => g[0] === 'menu:close'))}`)
+  await key('Escape')
+  console.log(`  再 Esc：关菜单 ${ok(got.some((g) => g[0] === 'menu:close'))}`)
+  // 贴着屏幕右下角：子菜单往左开、往上挪，不出屏幕
+  await show2(area.x + area.width - 216 - 2 * MARGIN, area.y + area.height - 520)
+  await js(`[...document.querySelectorAll('#list .mi')].find(r => r.textContent.includes('看看…')).click()`); await wait(200)
+  const b2 = win.getBounds()
+  const side = await js(`parseInt(document.getElementById('sub').style.left) < parseInt(document.getElementById('box').style.left) ? 'left' : 'right'`)
+  console.log(`  靠右下角：子菜单在 ${side === 'left' ? '左边' : '右边'} ${ok(side === 'left')}，窗口没出屏幕 ${ok(b2.x >= area.x - MARGIN && b2.x + b2.width <= area.x + area.width + MARGIN && b2.y + b2.height <= area.y + area.height + MARGIN)}`)
+
   console.log('\n网页报错：' + (errors.length ? errors.join('; ') : '没有'))
   app.quit()
 })
